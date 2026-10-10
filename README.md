@@ -45,6 +45,7 @@ pi loads the skill from the same folder when its settings list it: `"skills": ["
 Five actions draw on the picture instead of acting on the page: `box`, `circle`, `underline`, `arrow` and `spotlight`. Each names an element as `click` does. `skill/SKILL.md` says how to write them.
 
 - **A mark is an overlay of the recorder**, like the note: an SVG in screen pixels, outside `<body>`. A stroke appears as if drawn because a CSS animation uncovers it. The recorder removes scripts from an overlay, so nothing in a mark runs one.
+- **A mark goes around what the viewer sees of an element.** A locator by text often names a block as wide as the page while its words are not. An element that shows no box of its own (no background, border or shadow, and not a control or a picture) is therefore measured by what is in it.
 - **A mark does not move with the page.** Whatever moves the picture takes the marks away first: a scroll, and a zoom that has to go somewhere else. While a mark is shown and the next target is already in the picture, the picture holds still.
 - **A mark goes as a click, a key press or a choice from a list lands**, so that none is left on a page that no longer has its target, or in front of what the action changed. Marks that are still there at the end of a step's actions stay until the narration of the step ends.
 - **An arrow comes from the emptiest side.** There are eight candidates, the one that faces the middle of the picture first. The page is asked how many points of each lie on a control, a picture or text, and the lowest count wins.
