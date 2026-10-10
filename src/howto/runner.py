@@ -43,7 +43,7 @@ POINTER_ACTIONS = ("click", "hover", "fill", "select")
 MOVING_ACTIONS = ("goto", "scroll_to")
 # The actions that may change the page under a mark. The marks go as such an
 # action lands, so that none is left on a page that no longer has its target.
-CLEARING_ACTIONS = ("click", "press")
+CLEARING_ACTIONS = ("click", "press", "select")
 
 
 class Stage(Protocol):

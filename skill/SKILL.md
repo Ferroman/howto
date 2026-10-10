@@ -162,7 +162,7 @@ steps:
 ```
 
 - A mark goes in `do`, at the place where it should appear: before the click it points at, or alone in a step that only explains something.
-- It stays until the next `click` or `press` of its step, or until the narration of the step ends, and then it fades. A `goto` or a `scroll_to` takes it away first.
+- It stays until the next `click`, `press` or `select` of its step, or until the narration of the step ends, and then it fades. A `goto` or a `scroll_to` takes it away first.
 - `howto` chooses the side that an arrow comes from: the one where the page is emptiest. Keep a `note` to two or three words. The words of an arrow go in `note`, because `text` already names an element.
 - With `zoom`, the picture moves in on a marked element as it does for a click, and it stays there while the mark is shown.
 - Each mark makes its step about a second longer.

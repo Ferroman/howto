@@ -352,9 +352,17 @@ def test_marks_in_a_row_are_held_once(tmp_path):
     assert clock.sleeps == [0.5, 0.6, 0.4]
 
 
-def test_a_key_press_takes_the_marks_away(tmp_path):
-    _, stage, _ = take(tmp_path, [{"do": [circle("A"), {"press": "Enter"}, click("B")]}])
-    assert stage.calls == ["start_recording", MARK_A, "press Enter", "clear_marks", CLICK_B, "stop_recording"]
+@pytest.mark.parametrize(
+    "action, described",
+    [
+        ({"press": "Enter"}, "press Enter"),
+        # Picking an option is there to change the page, as a click is.
+        ({"select": {"label": "Role", "option": "Admin"}}, 'select label="Role" option="Admin"'),
+    ],
+)
+def test_an_action_that_may_change_the_page_takes_the_marks_away(tmp_path, action, described):
+    _, stage, _ = take(tmp_path, [{"do": [circle("A"), action, click("B")]}])
+    assert stage.calls == ["start_recording", MARK_A, described, "clear_marks", CLICK_B, "stop_recording"]
 
 
 @pytest.mark.parametrize(
@@ -362,7 +370,6 @@ def test_a_key_press_takes_the_marks_away(tmp_path):
     [
         ({"hover": {"role": "button", "name": "A"}}, 'hover role=button name="A"'),
         ({"fill": {"label": "Email", "value": "sam@example.com"}}, 'fill label="Email" value="sam@example.com"'),
-        ({"select": {"label": "Role", "option": "Admin"}}, 'select label="Role" option="Admin"'),
         (DONE, WAIT_DONE),
     ],
 )
