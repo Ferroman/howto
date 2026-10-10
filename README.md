@@ -31,6 +31,12 @@ pi loads the skill from the same folder when its settings list it: `"skills": ["
 
 `skill/SKILL.md` is the reference for the storyboard format.
 
+## Stopping a run
+
+Ctrl+C stops a probe or a render, runs the storyboard's `cleanup`, and exits with 130. The signal is acted on between browser calls, so the stop can take as long as one action's timeout.
+
+A termination signal (SIGTERM) does the same when it is sent to `howto` alone. Sent to the whole process group, as a shell's time limit often does, it also reaches Playwright, which closes the browser at once: the run still ends with 130 and leaves no files behind, but `cleanup` cannot run. Run `howto probe` on the storyboard afterwards, because a probe ends with `cleanup`.
+
 ## Environment variables
 
 | Variable | Default | Meaning |
