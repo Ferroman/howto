@@ -1,4 +1,4 @@
-"""Shared fixtures: a sandbox for howto's state, and fake tts, ffmpeg and ffprobe programs."""
+"""Shared fixtures: a sandbox for howto's state, and fake tts, ffmpeg, ffprobe and img2webp programs."""
 from __future__ import annotations
 
 import stat
@@ -33,10 +33,13 @@ FAKE_TTS = '''
 '''
 
 FAKE_FFMPEG = '''
-    """Stands in for ffmpeg in the two ways howto calls it.
+    """Stands in for ffmpeg in the four ways howto calls it.
 
     One input: a clip conversion. Writes silence of the same length at 48 kHz, mono, 16-bit.
     Two inputs: the assembly. Writes a marker file, or fails when FAKE_FFMPEG_FAIL=mux.
+    With -frame_pts: the frames of an animated picture. Writes three files into
+    the current directory, numbered 0, 5 and 6, or fails when FAKE_FFMPEG_FAIL=frames.
+    With -final_delay: the GIF. Writes a marker file, or fails when FAKE_FFMPEG_FAIL=gif.
     """
     import os, sys, wave
 
@@ -47,6 +50,15 @@ FAKE_FFMPEG = '''
             handle.write(" ".join(args) + "\\n")
     inputs = [args[i + 1] for i, arg in enumerate(args) if arg == "-i"]
     out = args[-1]
+    for flag, kind in (("-frame_pts", "frames"), ("-final_delay", "gif")):
+        if flag in args:
+            if os.environ.get("FAKE_FFMPEG_FAIL") == kind:
+                sys.stderr.write(f"fake-ffmpeg: told to fail the {kind}\\n")
+                sys.exit(1)
+            for name in ([out % number for number in (0, 5, 6)] if kind == "frames" else [out]):
+                with open(name, "wb") as handle:
+                    handle.write(f"fake {kind}".encode())
+            sys.exit(0)
     if len(inputs) == 2:
         if os.environ.get("FAKE_FFMPEG_FAIL") == "mux":
             sys.stderr.write("fake-ffmpeg: told to fail the assembly\\n")
@@ -68,6 +80,22 @@ FAKE_FFPROBE = '''
     import os
 
     print(os.environ.get("FAKE_FFPROBE_DURATION", "10.0"))
+'''
+
+FAKE_IMG2WEBP = '''
+    """Stands in for img2webp: writes a marker file, or fails when FAKE_IMG2WEBP_FAIL is set."""
+    import os, sys
+
+    args = sys.argv[1:]
+    log = os.environ.get("FAKE_IMG2WEBP_LOG")
+    if log:
+        with open(log, "a", encoding="utf-8") as handle:
+            handle.write(" ".join(args) + "\\n")
+    if os.environ.get("FAKE_IMG2WEBP_FAIL"):
+        sys.stderr.write("fake-img2webp: told to fail\\n")
+        sys.exit(1)
+    with open(args[args.index("-o") + 1], "wb") as handle:
+        handle.write(b"fake webp")
 '''
 
 
@@ -105,14 +133,18 @@ def fake_tts(tmp_path, monkeypatch, sandbox):
 
 @pytest.fixture
 def fakes(tmp_path, monkeypatch, sandbox, fake_tts):
-    """Fake tts, ffmpeg and ffprobe together, for tests that must not run the real programs."""
+    """Fake tts, ffmpeg, ffprobe and img2webp together, for tests that must not run the real programs."""
     ffmpeg = _script(tmp_path / "fake-ffmpeg", FAKE_FFMPEG)
     ffprobe = _script(tmp_path / "fake-ffprobe", FAKE_FFPROBE)
+    img2webp = _script(tmp_path / "fake-img2webp", FAKE_IMG2WEBP)
     monkeypatch.setenv("HOWTO_FFMPEG", str(ffmpeg))
     monkeypatch.setenv("HOWTO_FFPROBE", str(ffprobe))
-    monkeypatch.delenv("FAKE_FFMPEG_FAIL", raising=False)
-    monkeypatch.delenv("FAKE_FFPROBE_DURATION", raising=False)
-    return SimpleNamespace(tts=fake_tts, ffmpeg=str(ffmpeg), ffprobe=str(ffprobe), sandbox=sandbox)
+    monkeypatch.setenv("HOWTO_IMG2WEBP", str(img2webp))
+    for name in ("FAKE_FFMPEG_FAIL", "FAKE_FFPROBE_DURATION", "FAKE_IMG2WEBP_FAIL"):
+        monkeypatch.delenv(name, raising=False)
+    return SimpleNamespace(
+        tts=fake_tts, ffmpeg=str(ffmpeg), ffprobe=str(ffprobe), img2webp=str(img2webp), sandbox=sandbox
+    )
 
 
 SITE = Path(__file__).parent / "fixtures" / "site"

@@ -1,4 +1,4 @@
-"""The `howto` command: login, probe, narrate, render."""
+"""The `howto` command: login, probe, narrate, render, animate."""
 from __future__ import annotations
 
 import argparse
@@ -12,6 +12,7 @@ from pathlib import Path
 import yaml
 
 from . import assemble as assembling
+from .animation import FORMATS, animate
 from .errors import HowtoError, RunError, StoryboardError
 from .narrate import narrate
 from .probe import format_report
@@ -129,24 +130,35 @@ def cmd_narrate(args: argparse.Namespace) -> int:
     return 0
 
 
+def _work_dir(storyboard: Storyboard) -> Path:
+    """A new folder for the intermediate files of one take."""
+    work_root = cache_dir() / "work"
+    work_root.mkdir(parents=True, exist_ok=True)
+    return Path(tempfile.mkdtemp(prefix=f"{storyboard.name}-", dir=work_root))
+
+
+def _record(storyboard: Storyboard, clips, video: Path, *, animated: bool = False) -> RunResult:
+    """One take in a headless browser. A warning of cleanup goes to stderr, and a failed step is a RunError."""
+    with _browser(storyboard, headless=True) as (stage, interrupt):
+        result = run_take(storyboard, stage, clips, RealClock(interrupt), video, animated=animated)
+    for warning in result.warnings:
+        print(f"howto: warning: {warning}", file=sys.stderr)
+    if result.failed:
+        raise RunError(_explain_failure(storyboard, result))
+    return result
+
+
 def cmd_render(args: argparse.Namespace) -> int:
     storyboard = load(Path(args.storyboard))
     ffmpeg = find_tool("ffmpeg", "HOWTO_FFMPEG")
     ffprobe = find_tool("ffprobe", "HOWTO_FFPROBE")
     # Narration first: a `tts` failure must stop the render before the browser starts.
     clips = narrate(storyboard, cache_dir=cache_dir() / "clips", ffmpeg=ffmpeg)
-    work_root = cache_dir() / "work"
-    work_root.mkdir(parents=True, exist_ok=True)
-    work = Path(tempfile.mkdtemp(prefix=f"{storyboard.name}-", dir=work_root))
+    work = _work_dir(storyboard)
     keep = args.keep_work
     try:
         video = work / "capture.webm"
-        with _browser(storyboard, headless=True) as (stage, interrupt):
-            result = run_take(storyboard, stage, clips, RealClock(interrupt), video)
-        for warning in result.warnings:
-            print(f"howto: warning: {warning}", file=sys.stderr)
-        if result.failed:
-            raise RunError(_explain_failure(storyboard, result))
+        result = _record(storyboard, clips, video)
         try:
             outputs = assembling.assemble(
                 video=video,
@@ -170,9 +182,60 @@ def cmd_render(args: argparse.Namespace) -> int:
             shutil.rmtree(work, ignore_errors=True)
 
 
+def _file_size(path: Path) -> str:
+    size = path.stat().st_size
+    return f"{size / 1_000_000:.1f} MB" if size >= 1_000_000 else f"{max(1, round(size / 1000))} KB"
+
+
+def cmd_animate(args: argparse.Namespace) -> int:
+    storyboard = load(Path(args.storyboard))
+    if args.width < 1:
+        raise StoryboardError("--width must be 1 or more")
+    formats = FORMATS if args.format == "both" else (args.format,)
+    ffmpeg = find_tool("ffmpeg", "HOWTO_FFMPEG")
+    img2webp = None
+    if "webp" in formats:
+        # Before the browser starts: a take that cannot become a picture is a take for nothing.
+        try:
+            img2webp = find_tool("img2webp", "HOWTO_IMG2WEBP")
+        except RunError as exc:
+            raise RunError(f"{exc}. It comes with the `webp` package. `--format gif` needs only ffmpeg.") from None
+    work = _work_dir(storyboard)
+    keep = args.keep_work
+    try:
+        video = work / "capture.webm"
+        # Nothing is spoken, so there are no clips and no `tts`.
+        result = _record(storyboard, {}, video, animated=True)
+        try:
+            picture = animate(
+                video=video,
+                length=result.timeline[-1].end,
+                crop=result.crop,
+                viewport=storyboard.viewport,
+                width=args.width,
+                formats=formats,
+                name=storyboard.name,
+                out_dir=_out_dir(args, storyboard),
+                work=work,
+                ffmpeg=ffmpeg,
+                img2webp=img2webp,
+            )
+        except RunError:
+            keep = True
+            print(f"howto: work directory kept: {work}", file=sys.stderr)
+            raise
+        # The size in bytes is what decides whether a picture fits where it is going.
+        for path in picture.files.values():
+            print(f"{path}  {picture.width}x{picture.height}  {picture.seconds:.1f} s  {_file_size(path)}")
+        return 0
+    finally:
+        if not keep:
+            shutil.rmtree(work, ignore_errors=True)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="howto", description="Narrated how-to videos of a web app, from a storyboard."
+        prog="howto", description="Narrated how-to videos and animated pictures of a web app, from a storyboard."
     )
     commands = parser.add_subparsers(dest="command", required=True)
 
@@ -199,6 +262,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_render.add_argument("--out", metavar="DIR", help="folder for the results (default: next to the storyboard)")
     p_render.add_argument("--keep-work", action="store_true", help="keep the intermediate files")
     p_render.set_defaults(func=cmd_render)
+
+    p_animate = commands.add_parser("animate", help="capture the steps without sound as a picture that loops")
+    p_animate.add_argument("storyboard")
+    p_animate.add_argument("--out", metavar="DIR", help="folder for the results (default: next to the storyboard)")
+    p_animate.add_argument("--width", type=int, default=960, metavar="N", help="scale a wider picture down to N pixels (default 960)")
+    p_animate.add_argument("--format", choices=("gif", "webp", "both"), default="both", help="which files to write (default both)")
+    p_animate.add_argument("--keep-work", action="store_true", help="keep the intermediate files")
+    p_animate.set_defaults(func=cmd_animate)
     return parser
 
 

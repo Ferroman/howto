@@ -1,13 +1,12 @@
-import subprocess
 import time
 
 import pytest
 
+from pictures import brightness, redness, region
 from howto.capture import MARK_BUSY, open_stage
 from howto.errors import RunError
 from howto.runner import StepFailed, run_probe
 from howto.storyboard import Action, Pace, parse
-from howto.tools import find_tool
 from howto.zoom import Box, frame, inside
 
 pytestmark = pytest.mark.browser
@@ -98,24 +97,6 @@ def test_an_unreachable_start_page_is_explained(chromium, tmp_path):
     with pytest.raises(RunError, match="cannot open http://127.0.0.1:9/"):
         with open_stage(sb, profiles_dir=tmp_path / "profiles"):
             pass
-
-
-def region(video, *, x, y, width, height):
-    """The mean colour (r, g, b) of one region of the picture, for every frame of a video."""
-    try:
-        ffmpeg = find_tool("ffmpeg", "HOWTO_FFMPEG")
-    except RunError:
-        pytest.skip("ffmpeg is not installed")
-    raw = subprocess.run(
-        [ffmpeg, "-loglevel", "error", "-i", str(video),
-         "-vf", f"crop={width}:{height}:{x}:{y},scale=1:1:flags=area,format=rgb24", "-f", "rawvideo", "-"],
-        capture_output=True, check=True,
-    ).stdout
-    return [tuple(raw[i:i + 3]) for i in range(0, len(raw) - 2, 3)]
-
-
-def brightness(video, **where):
-    return [sum(colour) / 3 for colour in region(video, **where)]
 
 
 def test_a_hidden_note_leaves_the_picture(chromium, site_url, tmp_path):
@@ -339,10 +320,6 @@ def test_a_page_that_replaced_itself_starts_wide(chromium, site_url, tmp_path):
         before = box_of(stage, "Invite")
         stage.zoom_to(invite, 2, False)
         assert box_of(stage, "Invite").width == pytest.approx(2 * before.width, abs=1)
-
-
-def redness(video, **where):
-    return [red - green for red, green, _ in region(video, **where)]
 
 
 def test_a_take_shows_the_zoom_and_the_way_back(chromium, site_url, tmp_path):

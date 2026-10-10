@@ -4,6 +4,8 @@ import subprocess
 import pytest
 import yaml
 
+from pictures import dimensions, gif_frames, redness, webp
+
 from howto import cli
 from howto.errors import RunError
 from howto.tools import find_tool
@@ -194,3 +196,60 @@ def test_a_storyboard_with_marks_probes_and_renders(chromium, site_url, fake_tts
         capture_output=True, text=True, check=True,
     )
     assert abs(float(shown.stdout) - steps[-1]["end"]) <= 0.5
+
+
+def test_a_storyboard_with_a_crop_probes_and_animates(chromium, site_url, real_ffmpeg, sandbox, tmp_path, capsys, monkeypatch):
+    monkeypatch.delenv("HOWTO_IMG2WEBP", raising=False)
+    try:
+        find_tool("img2webp", "HOWTO_IMG2WEBP")
+    except RunError:
+        pytest.skip("img2webp is not installed")
+    # An animated picture has no voice. A speech command that is asked for anything fails the test.
+    monkeypatch.setenv("HOWTO_TTS", "/nonexistent/tts")
+    apply = {"role": "button", "name": "Apply"}
+    data = {
+        "title": "Pick a style",
+        "url": f"{site_url}/panel.html",
+        "viewport": "1280x720",
+        "crop": {"role": "complementary", "name": "Style"},
+        "steps": [
+            {
+                "chapter": "Style",
+                "say": "These words are for the video.",
+                "note": "Press Apply",
+                "do": [{"arrow": {"role": "button", "name": "Edge"}}, {"box": apply}, {"click": apply}],
+                "pause": 1,
+            },
+        ],
+    }
+    path = tmp_path / "docs" / "style.yaml"
+    path.parent.mkdir()
+    path.write_text(yaml.safe_dump(data), encoding="utf-8")
+
+    assert cli.main(["probe", str(path)]) == 0
+    out = capsys.readouterr().out
+    # The panel is 300 by 400 pixels at (960, 100), and a crop keeps 12 pixels around it.
+    assert out.startswith('crop: 324 x 424 pixels at 948, 88\nstep 1 ok      chapter "Style"; arrow role=button name="Edge"; box')
+    assert "note:" not in out
+
+    assert cli.main(["animate", str(path)]) == 0
+    gif, picture = path.parent / "style.gif", path.parent / "style.webp"
+    lines = capsys.readouterr().out.splitlines()
+    assert [line.split("  ")[:2] for line in lines] == [[str(gif), "324x424"], [str(picture), "324x424"]]
+    assert sorted(p.name for p in path.parent.iterdir()) == ["style.gif", "style.webp", "style.yaml"]
+    assert list(sandbox.work.iterdir()) == []
+
+    assert dimensions(real_ffmpeg[1], gif) == (324, 424)
+    frames = gif_frames(real_ffmpeg[1], gif)
+    seconds = frames[-1][0] + frames[-1][1]
+    # Lead, two marks, their hold, the click and the gap come to some 3 s, and then the pause of 1 s.
+    assert 3.0 < seconds < 8.0
+    assert f"  {seconds:.1f} s  " in lines[0]
+    canvas, times, loops = webp(picture)
+    assert (canvas, loops) == ((324, 424), 0)
+    assert sum(times) == round(seconds * 1000)
+    # The box around Apply, 8 pixels above the button at (980, 120). In the
+    # picture that is (32, 24): the cut is where the crop said.
+    stroke = redness(gif, x=52, y=20, width=60, height=8)
+    assert max(stroke) > 20, "the mark is not in the picture"
+    assert stroke[-1] < 5, "the picture ends with the mark still on it"

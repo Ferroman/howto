@@ -1,6 +1,6 @@
 # howto
 
-`howto` turns a storyboard, a YAML file of steps and narration, into a narrated how-to video of a web app: an MP4 with SRT and WebVTT subtitles. An AI agent writes the storyboard by following `skill/SKILL.md`. The tool itself calls no model.
+`howto` turns a storyboard, a YAML file of steps and narration, into a narrated how-to video of a web app: an MP4 with SRT and WebVTT subtitles. From the same kind of file it makes a short animated picture, a GIF and a WebP, for documentation. An AI agent writes the storyboard by following `skill/SKILL.md`. The tool itself calls no model.
 
 The design, and the research behind it, are in the dotfiles repository: `~/p/.dotfiles/docs/superpowers/specs/2026-10-10-howto-video-design.md`.
 
@@ -9,6 +9,7 @@ The design, and the research behind it, are in the dotfiles repository: `~/p/.do
 - `uv`
 - `ffmpeg` and `ffprobe`
 - A `tts` command that accepts `-l en -o FILE TEXT`. `HOWTO_TTS` names another command with the same arguments.
+- `img2webp`, from the `webp` package, for the WebP of an animated picture. Without it, `howto animate --format gif` still works.
 
 ## Install
 
@@ -28,6 +29,7 @@ pi loads the skill from the same folder when its settings list it: `"skills": ["
 | `howto probe STORYBOARD` | Runs the steps with no recording and prints an outline of the page |
 | `howto narrate STORYBOARD` | Speaks the narration only |
 | `howto render STORYBOARD` | Writes the video and the subtitles next to the storyboard |
+| `howto animate STORYBOARD` | Writes a GIF and a WebP that loop without sound, next to the storyboard |
 
 `skill/SKILL.md` is the reference for the storyboard format.
 
@@ -54,9 +56,23 @@ Five actions draw on the picture instead of acting on the page: `box`, `circle`,
 
 Two details depend on the pinned Playwright release. Its stylesheet sets every `svg` in the overlay layer to a height of 0, so the marks carry their size as an inline style. And it wraps an overlay in an element that its own stylesheet does not position, so each mark brings a positioned box of its own.
 
+## Animated pictures
+
+`howto animate` performs a storyboard without narration and writes `NAME.gif` and `NAME.webp`. `--format` chooses one of them, and `--width` (960 by default) scales a wider picture down. `skill/SKILL.md` says how to write the storyboard.
+
+- **The take is silent.** No `tts` is needed and no title card is shown. A step lasts as long as its actions and its `pause`, and a note and the marks explain what happens.
+- **`crop` cuts the picture to one element.** A window of 1920 pixels scaled down to the width of a document has text of five pixels. A part of the window at its own size stays readable, which matters more than the file format. `howto render` ignores `crop`.
+- **The cut is known during the take, not made afterwards.** The recorder films the whole window and ffmpeg cuts the part out. The browser is told the part first, so that a note lies at its bottom and an arrow does not leave it. A cut made later loses the note, which lies at the bottom of the window.
+- **The crop is one fixed part of the window**, measured once after `setup`, with 12 pixels around the element. A zoom moves the page under it, so a storyboard with both is refused.
+- **A probe reports the crop**, and names each action or mark whose element is outside it. The author is often a model that cannot look at the picture.
+- **Only the frames that differ are kept.** ffmpeg samples 12.5 frames a second and writes a frame when the picture changed, named by its number. The distance to the next number is the time the frame is shown, and both encoders are given that time. A GIF encoder that drops repeated frames itself loses the pause at the end of the loop, because its last frame has no successor to take a time from.
+- **The GIF has one palette and no dither.** Dither noise differs from frame to frame, and it was the larger part of the file. The WebP is lossy and three to four times smaller.
+
+The pause was measured on a take of 9 seconds: with ffmpeg dropping the repeated frames, the GIF played for 6.9 seconds.
+
 ## Stopping a run
 
-Ctrl+C stops a probe or a render, runs the storyboard's `cleanup`, and exits with 130. The signal is acted on between browser calls, so the stop can take as long as one action's timeout.
+Ctrl+C stops a probe, a render or an animation, runs the storyboard's `cleanup`, and exits with 130. The signal is acted on between browser calls, so the stop can take as long as one action's timeout.
 
 A termination signal (SIGTERM) does the same when it is sent to `howto` alone. Sent to the whole process group, as a shell's time limit often does, it also reaches Playwright, which closes the browser at once: the run still ends with 130 and leaves no files behind, but `cleanup` cannot run. Run `howto probe` on the storyboard afterwards, because a probe ends with `cleanup`.
 
@@ -66,6 +82,7 @@ A termination signal (SIGTERM) does the same when it is sent to `howto` alone. S
 |---|---|---|
 | `HOWTO_TTS` | `tts` | The speech command |
 | `HOWTO_FFMPEG`, `HOWTO_FFPROBE` | linuxbrew, then `PATH` | The ffmpeg programs |
+| `HOWTO_IMG2WEBP` | linuxbrew, then `PATH` | The program that writes an animated WebP |
 | `HOWTO_ACTION_TIMEOUT` | `10` | Seconds an element gets to appear |
 | `HOWTO_DATA_DIR` | `~/.local/share/howto` | Browser profiles |
 | `HOWTO_CACHE_DIR` | `~/.cache/howto` | Spoken clips and intermediate files |
@@ -88,9 +105,10 @@ The browser tests need `uv run playwright install chromium` once. Without Chromi
 | `src/howto/timeline.py` | The timing arithmetic |
 | `src/howto/runner.py` | Setup, steps and cleanup, for a probe or a take |
 | `src/howto/capture.py` | The Playwright browser. The only module that imports Playwright |
-| `src/howto/zoom.py` | Which part of the page a zoom shows |
+| `src/howto/zoom.py` | Which part of the page a zoom shows, and which part a crop cuts out |
 | `src/howto/marks.py` | Where each mark is drawn, and its SVG |
 | `src/howto/probe.py` | The probe report |
 | `src/howto/assemble.py` | The narration track, ffmpeg and the subtitles |
+| `src/howto/animation.py` | The GIF and the WebP of an animated picture |
 | `src/howto/cli.py` | The commands |
 | `spike/` | The measurements made before the build |
