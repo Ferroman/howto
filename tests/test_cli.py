@@ -79,6 +79,13 @@ def test_probe_options_reach_the_stage(browser, tmp_path):
     assert CLICK_B not in browser.stage.calls
 
 
+def test_within_keeps_a_name_as_it_is_written(browser, tmp_path):
+    # YAML would read Yes as true.
+    assert cli.main(["probe", str(write_board(tmp_path)), "--within", "{role: button, name: Yes}"]) == 0
+    within, _ = browser.stage.report_args
+    assert (within.role, within.name) == ("button", "Yes")
+
+
 @pytest.mark.parametrize(
     "arguments",
     [["--until", "0"], ["--max-chars", "0"], ["--within", "{rol: dialog}"], ["--within", "[unclosed"]],

@@ -15,7 +15,7 @@ from .errors import HowtoError, RunError, StoryboardError
 from .narrate import narrate
 from .probe import format_report
 from .runner import RealClock, RunResult, run_probe, run_take
-from .storyboard import PROFILE_RE, Storyboard, load, parse_locator
+from .storyboard import PROFILE_RE, Storyboard, load, parse_locator, read_yaml
 from .timeline import narration_only
 from .tools import find_tool
 
@@ -80,7 +80,7 @@ def cmd_probe(args: argparse.Namespace) -> int:
     within = None
     if args.within:
         try:
-            within = parse_locator(yaml.safe_load(args.within), "--within")
+            within = parse_locator(read_yaml(args.within), "--within")
         except yaml.YAMLError as exc:
             raise StoryboardError(f"--within: not valid YAML: {exc}") from None
     with open_stage(storyboard, headless=not args.show) as stage:

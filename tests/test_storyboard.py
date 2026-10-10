@@ -196,3 +196,72 @@ def test_load_puts_the_path_in_front_of_the_problem(tmp_path):
     with pytest.raises(StoryboardError) as caught:
         load(path)
     assert str(caught.value).startswith(f"{path}: `steps` must be a list")
+
+
+WRITTEN_VALUES = """
+title: 2026-10-10
+url: http://demo.test
+profile:
+steps:
+  - say: Type the code.
+    pause: 1.5
+    do:
+      - fill: {label: ZIP code, value: 02134}
+      - fill: {label: Time, value: 12:30}
+      - fill: {label: Phone, value: +15551234567}
+      - fill: {label: Price, value: 1.50}
+      - fill: {label: Amount, value: 1_000}
+      - click: {role: button, name: Yes, exact: true, nth: 0}
+      - select: {label: Newsletter, option: No}
+      - press: 5
+cleanup:
+pace: {lead: 1, typing: 40}
+"""
+
+
+def test_a_file_keeps_each_value_as_it_is_written(tmp_path):
+    # YAML would read 02134 as the octal number 1116, 12:30 as 750, and Yes as true.
+    path = tmp_path / "written.yaml"
+    path.write_text(WRITTEN_VALUES, encoding="utf-8")
+    sb = load(path)
+    do = sb.steps[0].do
+    assert sb.title == "2026-10-10"
+    assert [action.value for action in do[:5]] == ["02134", "12:30", "+15551234567", "1.50", "1_000"]
+    assert (do[5].locator.name, do[5].locator.exact, do[5].locator.nth) == ("Yes", True, 0)
+    assert do[6].value == "No"
+    assert do[7].value == "5"
+
+
+def test_a_file_still_reads_its_numbers_and_empty_fields(tmp_path):
+    path = tmp_path / "written.yaml"
+    path.write_text(WRITTEN_VALUES, encoding="utf-8")
+    sb = load(path)
+    assert sb.steps[0].pause == 1.5
+    assert sb.pace == Pace(lead=1.0, typing=40.0)
+    assert sb.profile is None and sb.cleanup == ()
+
+
+@pytest.mark.parametrize(
+    "line, fragment",
+    [
+        ("pause: soon", "step 1: `pause` must be a number, 0 or more"),
+        ("pause: .inf", "step 1: `pause` must be a number, 0 or more"),
+        ("pause: nan", "step 1: `pause` must be a number, 0 or more"),
+        ("do: [{click: {label: x, nth: first}}]", "`nth` must be a whole number, 0 or more"),
+        ("do: [{click: {label: x, nth: 1.5}}]", "`nth` must be a whole number, 0 or more"),
+        ("do: [{click: {label: x, exact: maybe}}]", "`exact` must be true or false"),
+    ],
+)
+def test_a_file_with_a_malformed_number_or_flag_is_refused(tmp_path, line, fragment):
+    path = tmp_path / "bad.yaml"
+    path.write_text(f"title: T\nurl: http://demo.test\nsteps:\n  - say: Hi.\n    {line}\n", encoding="utf-8")
+    with pytest.raises(StoryboardError) as caught:
+        load(path)
+    assert fragment in str(caught.value)
+
+
+def test_a_malformed_pace_number_is_refused(tmp_path):
+    path = tmp_path / "bad.yaml"
+    path.write_text("title: T\nurl: http://demo.test\npace: {typing: fast}\nsteps:\n  - say: Hi.\n", encoding="utf-8")
+    with pytest.raises(StoryboardError, match="`pace`: `typing` must be a number"):
+        load(path)

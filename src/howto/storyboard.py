@@ -6,6 +6,7 @@ the file without seeing this code.
 """
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass, fields
 from pathlib import Path
@@ -26,6 +27,27 @@ VIEWPORT_RE = re.compile(r"^([1-9]\d{2,4})x([1-9]\d{2,4})$")
 # A sentence ends at ., ! or ? followed by white space. "2.5" has no white
 # space after its dot, so it stays whole.
 SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
+
+
+class _TextLoader(yaml.SafeLoader):
+    """Reads every value as the text that was written.
+
+    YAML's own rules read 02134 as the octal number 1116, 12:30 as 750, Yes as
+    true and 2026-10-10 as a date. A storyboard holds text that is typed into a
+    form and names that are matched on a page, so each value must arrive as it
+    stands in the file. Only an empty value and `null` keep their YAML meaning.
+    """
+
+
+_TextLoader.yaml_implicit_resolvers = {
+    first: [(tag, pattern) for tag, pattern in resolvers if tag == "tag:yaml.org,2002:null"]
+    for first, resolvers in yaml.SafeLoader.yaml_implicit_resolvers.items()
+}
+
+
+def read_yaml(text: str) -> object:
+    """Parses YAML with every value kept as written. Raises yaml.YAMLError."""
+    return yaml.load(text, Loader=_TextLoader)
 
 
 @dataclass(frozen=True)
@@ -112,12 +134,42 @@ def split_sentences(text: str) -> tuple[str, ...]:
 
 
 def _text(value: object, where: str) -> str:
-    """Non-empty text. YAML reads `value: 12345` as a number, so a number is turned into text."""
+    """Non-empty text. A storyboard built in code may hold a number here; it is turned into text."""
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         value = str(value)
     if not isinstance(value, str) or not value.strip():
         raise StoryboardError(f"{where}: must be non-empty text")
     return value
+
+
+def _number(value: object) -> float | None:
+    """A finite number, written as a number or as text. None for anything else."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, str):
+        try:
+            value = float(value.strip())
+        except ValueError:
+            return None
+    if not isinstance(value, (int, float)) or not math.isfinite(value):
+        return None
+    return float(value)
+
+
+def _whole(value: object) -> int | None:
+    """A whole number, written as a number or as text. None for anything else."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, str) and re.fullmatch(r"-?\d+", value.strip()):
+        return int(value.strip())
+    return value if isinstance(value, int) else None
+
+
+def _flag(value: object) -> bool | None:
+    """true or false, written as a YAML flag or as text. None for anything else."""
+    if isinstance(value, str) and value.strip().lower() in ("true", "false"):
+        return value.strip().lower() == "true"
+    return value if isinstance(value, bool) else None
 
 
 def parse_locator(data: object, where: str) -> Locator:
@@ -134,12 +186,14 @@ def parse_locator(data: object, where: str) -> Locator:
     values = {forms[0]: _text(data[forms[0]], f"{where}: `{forms[0]}`")}
     if "name" in data:
         values["name"] = _text(data["name"], f"{where}: `name`")
-    exact = data.get("exact", False)
-    if not isinstance(exact, bool):
+    exact = _flag(data.get("exact", False))
+    if exact is None:
         raise StoryboardError(f"{where}: `exact` must be true or false")
-    nth = data.get("nth")
-    if nth is not None and (isinstance(nth, bool) or not isinstance(nth, int) or nth < 0):
-        raise StoryboardError(f"{where}: `nth` must be a whole number, 0 or more")
+    nth = None
+    if data.get("nth") is not None:
+        nth = _whole(data["nth"])
+        if nth is None or nth < 0:
+            raise StoryboardError(f"{where}: `nth` must be a whole number, 0 or more")
     within = data.get("within")
     return Locator(
         **values,
@@ -197,8 +251,8 @@ def parse_step(data: object, index: int) -> Step:
         raise StoryboardError(f"{where}: unknown field `{unknown[0]}`")
     if not any(key in data for key in ("say", "do", "chapter")):
         raise StoryboardError(f"{where}: a step needs at least one of `say`, `do` and `chapter`")
-    pause = data.get("pause", 0)
-    if isinstance(pause, bool) or not isinstance(pause, (int, float)) or pause < 0:
+    pause = _number(data.get("pause", 0))
+    if pause is None or pause < 0:
         raise StoryboardError(f"{where}: `pause` must be a number, 0 or more")
     return Step(
         index=index,
@@ -206,7 +260,7 @@ def parse_step(data: object, index: int) -> Step:
         do=_parse_actions(data.get("do"), f"{where}: ", "do"),
         chapter=_text(data["chapter"], f"{where}: `chapter`") if "chapter" in data else None,
         note=_text(data["note"], f"{where}: `note`") if "note" in data else None,
-        pause=float(pause),
+        pause=pause,
     )
 
 
@@ -229,16 +283,17 @@ def _parse_pace(value: object) -> Pace:
         raise StoryboardError("`pace` must be a mapping")
     names = [f.name for f in fields(Pace)]
     numbers: dict[str, float] = {}
-    for key, number in value.items():
+    for key, written in value.items():
         if key not in names:
             raise StoryboardError(f"`pace`: unknown value `{key}`")
-        if isinstance(number, bool) or not isinstance(number, (int, float)):
+        number = _number(written)
+        if number is None:
             raise StoryboardError(f"`pace`: `{key}` must be a number")
         if key == "typing" and number <= 0:
             raise StoryboardError("`pace`: `typing` must be more than 0")
         if number < 0:
             raise StoryboardError(f"`pace`: `{key}` must be 0 or more")
-        numbers[key] = float(number)
+        numbers[key] = number
     return Pace(**numbers)
 
 
@@ -280,7 +335,7 @@ def load(path: Path) -> Storyboard:
     except (OSError, UnicodeDecodeError) as exc:
         raise StoryboardError(f"{path}: cannot read: {exc}") from None
     try:
-        data = yaml.safe_load(text)
+        data = read_yaml(text)
     except yaml.YAMLError as exc:
         raise StoryboardError(f"{path}: not valid YAML: {exc}") from None
     try:
