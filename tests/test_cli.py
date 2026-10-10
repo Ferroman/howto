@@ -301,6 +301,17 @@ def test_animate_cuts_the_picture_to_the_crop(browser, fakes, tmp_path, monkeypa
     assert "  340x250  " in capsys.readouterr().out
 
 
+def test_animate_names_the_list_of_frames_without_its_folder(browser, fakes, tmp_path, monkeypatch):
+    # ffmpeg 6 puts the folder of the list in front of each frame's name, and then reads a
+    # percent sign in that folder as the place of a frame number. ffmpeg runs inside the
+    # folder, so the list is named as the frames are: without a path.
+    log = tmp_path / "ffmpeg.log"
+    monkeypatch.setenv("FAKE_FFMPEG_LOG", str(log))
+    assert cli.main(["animate", str(write_board(tmp_path))]) == 0
+    (gif,) = [line for line in log.read_text().splitlines() if "-final_delay" in line]
+    assert " -f concat -i frames.txt " in f" {gif} "
+
+
 def test_render_films_the_whole_window_of_a_storyboard_with_a_crop(browser, fakes, tmp_path, monkeypatch):
     log = tmp_path / "ffmpeg.log"
     monkeypatch.setenv("FAKE_FFMPEG_LOG", str(log))

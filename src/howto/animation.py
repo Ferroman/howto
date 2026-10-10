@@ -142,7 +142,9 @@ def animate(
     frames_dir.mkdir(parents=True)
     # ffmpeg reads a % in the name of a frame as a place for its number, and
     # the path of the work directory may hold one. So it runs inside the
-    # directory, and the list below names the frames without a path.
+    # directory, and the list below names the frames without a path. The list
+    # itself is named without one too: ffmpeg 6 puts the folder of the list in
+    # front of every frame in it.
     # A take that is hardly longer than the head is kept whole: a flash is better than no picture.
     start = HEAD if length > 2 * HEAD else 0.0
     length -= start
@@ -160,7 +162,7 @@ def animate(
     part = {kind: out_dir / f".{name}.{kind}.part" for kind in final}
     try:
         if "gif" in final:
-            run(gif_command(ffmpeg, frames, counts[-1], part["gif"].resolve()), "ffmpeg (gif)", cwd=frames_dir)
+            run(gif_command(ffmpeg, Path(frames.name), counts[-1], part["gif"].resolve()), "ffmpeg (gif)", cwd=frames_dir)
         if "webp" in final:
             if img2webp is None:
                 raise RunError("img2webp: no program was given for the WebP")

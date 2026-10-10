@@ -103,10 +103,13 @@ def test_the_webp_command_gives_each_frame_its_time(tmp_path):
 
 
 @pytest.fixture
-def tools(monkeypatch):
-    """The real ffmpeg, ffprobe and img2webp."""
-    for name in ("HOWTO_FFMPEG", "HOWTO_FFPROBE", "HOWTO_IMG2WEBP"):
-        monkeypatch.delenv(name, raising=False)
+def tools():
+    """The real ffmpeg, ffprobe and img2webp.
+
+    HOWTO_FFMPEG and its siblings choose them, as they do for the command.
+    That is how the suite is run against another release of ffmpeg: release 6
+    and release 9 read a list of frames differently.
+    """
     try:
         return tuple(find_tool(name, f"HOWTO_{name.upper()}") for name in ("ffmpeg", "ffprobe", "img2webp"))
     except RunError as exc:
