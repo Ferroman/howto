@@ -1,0 +1,70 @@
+"""A clock and a stage that record what the runner asks of them."""
+from __future__ import annotations
+
+from pathlib import Path
+
+from howto.runner import PageReport, StepFailed
+
+
+class FakeClock:
+    """Time that moves only when something sleeps or a fake action takes time."""
+
+    def __init__(self) -> None:
+        self.t = 100.0
+        self.sleeps: list[float] = []
+
+    def now(self) -> float:
+        return self.t
+
+    def sleep(self, seconds: float) -> None:
+        if seconds > 0:
+            self.t += seconds
+            self.sleeps.append(round(seconds, 6))
+
+
+class FakeStage:
+    """Records every call. `fail_on` maps an action description to a reason."""
+
+    def __init__(self, clock=None, *, fail_on=None, interrupt_on=(), action_seconds=0.0, chapter_seconds=0.0):
+        self.clock = clock
+        self.fail_on = dict(fail_on or {})
+        self.interrupt_on = set(interrupt_on)
+        self.action_seconds = action_seconds
+        self.chapter_seconds = chapter_seconds
+        self.calls: list[str] = []
+        self.report_args = None
+
+    def _spend(self, seconds: float) -> None:
+        if self.clock is not None:
+            self.clock.t += seconds
+
+    def perform(self, action, pace) -> None:
+        described = action.describe()
+        self.calls.append(described)
+        self._spend(self.action_seconds)
+        if described in self.interrupt_on:
+            raise KeyboardInterrupt
+        if described in self.fail_on:
+            raise StepFailed(f"{described}: {self.fail_on[described]}")
+
+    def start_recording(self, path) -> None:
+        self.calls.append("start_recording")
+        Path(path).write_bytes(b"fake webm")
+
+    def stop_recording(self) -> None:
+        self.calls.append("stop_recording")
+
+    def show_chapter(self, title, seconds) -> None:
+        self.calls.append(f"chapter {title}")
+        self._spend(self.chapter_seconds)
+
+    def show_note(self, text) -> None:
+        self.calls.append(f"note {text}")
+
+    def hide_note(self) -> None:
+        self.calls.append("hide_note")
+
+    def report(self, within, max_chars) -> PageReport:
+        self.calls.append("report")
+        self.report_args = (within, max_chars)
+        return PageReport(url="http://demo.test/end", title="End", outline='- heading "End" [level=1]')
