@@ -6,6 +6,7 @@ import pytest
 from howto.errors import RunError
 from howto.narrate import clip_key, narrate, speak, tts_command, wav_duration
 from howto.storyboard import parse
+from howto.voices import design
 
 
 def board(tmp_path, steps):
@@ -78,3 +79,52 @@ def test_wav_duration_rejects_a_file_that_is_not_wav(tmp_path):
     path.write_bytes(b"this is not audio")
     with pytest.raises(RunError, match="not a readable WAV"):
         wav_duration(path)
+
+
+def voice(fakes, description="A calm man"):
+    return design("narrator", description, directory=fakes.sandbox.voices, command=fakes.tts.program, text="Hello there.", replace=True)
+
+
+def test_a_voice_is_cloned_for_each_sentence(fakes, tmp_path):
+    narrator = voice(fakes)
+    sb = board(tmp_path, [{"say": "Open the menu. Pick Settings."}])
+    narrate(sb, cache_dir=fakes.sandbox.clips, ffmpeg=fakes.ffmpeg, voice=narrator)
+    spoken = fakes.tts.calls()[1:]  # the first call made the voice
+    assert [call[-1] for call in spoken] == ["Open the menu.", "Pick Settings."]
+    for call in spoken:
+        assert call[call.index("--clone") + 1] == str(narrator.clip)
+        assert call[call.index("--clone-text") + 1] == "Hello there."
+        assert "--design" not in call, "a voice designed again for a sentence is another speaker"
+
+
+def test_narration_without_a_voice_asks_for_none(fakes, tmp_path):
+    narrate(board(tmp_path, [{"say": "Open the menu."}]), cache_dir=fakes.sandbox.clips, ffmpeg=fakes.ffmpeg)
+    (call,) = fakes.tts.calls()
+    assert "--clone" not in call and "--clone-text" not in call and "--design" not in call
+
+
+def test_another_voice_speaks_every_sentence_again(fakes, tmp_path):
+    sb = board(tmp_path, [{"say": "Open the menu."}])
+    narrate(sb, cache_dir=fakes.sandbox.clips, ffmpeg=fakes.ffmpeg)
+    narrate(sb, cache_dir=fakes.sandbox.clips, ffmpeg=fakes.ffmpeg, voice=voice(fakes))
+    narrate(sb, cache_dir=fakes.sandbox.clips, ffmpeg=fakes.ffmpeg, voice=voice(fakes, "A bright young woman"))
+    assert fakes.tts.spoken().count("Open the menu.") == 3
+
+
+def test_going_back_to_a_voice_speaks_nothing_again(fakes, tmp_path):
+    sb = board(tmp_path, [{"say": "Open the menu."}])
+    narrator = voice(fakes)
+    narrate(sb, cache_dir=fakes.sandbox.clips, ffmpeg=fakes.ffmpeg, voice=narrator)
+    narrate(sb, cache_dir=fakes.sandbox.clips, ffmpeg=fakes.ffmpeg)
+    narrate(sb, cache_dir=fakes.sandbox.clips, ffmpeg=fakes.ffmpeg, voice=narrator)
+    narrate(sb, cache_dir=fakes.sandbox.clips, ffmpeg=fakes.ffmpeg)
+    assert fakes.tts.spoken().count("Open the menu.") == 2
+
+
+def test_the_key_of_a_clip_without_a_voice_is_what_it_was():
+    # Clips spoken before voices existed stay valid.
+    assert clip_key("tts", "en", "Hello.") == "a477af180cb61b31ab201e2ff3d19332d4f69bfe50fee180d98f944915137f65"
+
+
+def test_the_key_covers_the_voice():
+    assert len({clip_key("tts", "en", "Hello."), clip_key("tts", "en", "Hello.", "a"), clip_key("tts", "en", "Hello.", "b")}) == 3

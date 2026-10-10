@@ -8,7 +8,7 @@ The design, and the research behind it, are in the dotfiles repository: `~/p/.do
 
 - `uv`
 - `ffmpeg` and `ffprobe`
-- A `tts` command that accepts `-l en -o FILE TEXT`. `HOWTO_TTS` names another command with the same arguments.
+- A `tts` command that accepts `-l en -o FILE TEXT`. `HOWTO_TTS` names another command with the same arguments. For [voices](#voices) it must also accept `--design DESCRIPTION`, and `--clone WAV --clone-text WORDS`.
 - `img2webp`, from the `webp` package, for the WebP of an animated picture. Without it, `howto animate --format gif` still works.
 
 ## Install
@@ -30,6 +30,7 @@ pi loads the skill from the same folder when its settings list it: `"skills": ["
 | `howto narrate STORYBOARD` | Speaks the narration only |
 | `howto render STORYBOARD` | Writes the video and the subtitles next to the storyboard |
 | `howto animate STORYBOARD` | Writes a GIF and a WebP that loop without sound, next to the storyboard |
+| `howto voice NAME DESCRIPTION` | Makes a voice for the narration from a description. `howto voice` lists the voices, and `howto voice NAME` shows one |
 
 `skill/SKILL.md` is the reference for the storyboard format.
 
@@ -73,6 +74,23 @@ Two details depend on the pinned Playwright release. Its stylesheet sets every `
 
 The pause was measured on a take of 9 seconds: with ffmpeg dropping the repeated frames, the GIF played for 6.9 seconds.
 
+## Voices
+
+A storyboard with `voice: NAME` is narrated in that voice. Without it, the speech command speaks in its own.
+
+```bash
+howto voice narrator "A calm, friendly man in his thirties with a clear American accent"
+mpv ~/.local/share/howto/voices/narrator.wav      # listen, and make it again until it is right
+howto voice narrator "A warmer and slower voice, a little older" --replace
+```
+
+- **A voice is a clip and the words in it**: `NAME.wav` and `NAME.yaml` in `~/.local/share/howto/voices`. The clip says two sentences of a video, or the words of `--text`.
+- **The voice is made once and cloned after that.** The speech command gets `--design DESCRIPTION` for the clip, and `--clone CLIP --clone-text WORDS` for every sentence of a video. Asking for the description again for each sentence does not work: a speech model that takes descriptions invents a speaker each time. Measured with Qwen3-TTS and a speaker-recognition model, where 1.0 is one speaker and two unrelated voices score 0.0 to 0.4: sentences designed one by one scored 0.10 to 0.44 against each other, and sentences cloned from one clip 0.64 to 0.84.
+- **The voice is part of a clip's cache name**, as a hash of the clip and its words. A new voice speaks every sentence again, and going back to an earlier one speaks nothing.
+- **`--replace` makes a voice anew.** Without it an existing voice stays, because every video that names it would speak differently.
+- **A recording works too.** Put a few seconds of someone speaking in `NAME.wav` and the words in `NAME.yaml` as `text: ...`.
+- **`howto animate` and `howto probe` do not need the voice.** Nothing is spoken in either.
+
 ## Stopping a run
 
 Ctrl+C stops a probe, a render or an animation, runs the storyboard's `cleanup`, and exits with 130. The signal is acted on between browser calls, so the stop can take as long as one action's timeout.
@@ -87,7 +105,7 @@ A termination signal (SIGTERM) does the same when it is sent to `howto` alone. S
 | `HOWTO_FFMPEG`, `HOWTO_FFPROBE` | linuxbrew, then `PATH` | The ffmpeg programs |
 | `HOWTO_IMG2WEBP` | linuxbrew, then `PATH` | The program that writes an animated WebP |
 | `HOWTO_ACTION_TIMEOUT` | `10` | Seconds an element gets to appear |
-| `HOWTO_DATA_DIR` | `~/.local/share/howto` | Browser profiles |
+| `HOWTO_DATA_DIR` | `~/.local/share/howto` | Browser profiles and voices |
 | `HOWTO_CACHE_DIR` | `~/.cache/howto` | Spoken clips and intermediate files |
 
 ## Tests
@@ -105,6 +123,7 @@ The browser tests need `uv run playwright install chromium` once. Without Chromi
 |---|---|
 | `src/howto/storyboard.py` | The storyboard format and its validation |
 | `src/howto/narrate.py` | One cached clip per sentence |
+| `src/howto/voices.py` | The voices: a clip to clone and the words in it |
 | `src/howto/timeline.py` | The timing arithmetic |
 | `src/howto/runner.py` | Setup, steps and cleanup, for a probe or a take |
 | `src/howto/capture.py` | The Playwright browser. The only module that imports Playwright |

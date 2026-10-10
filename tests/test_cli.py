@@ -404,3 +404,104 @@ def test_cleanup_warnings_of_an_animated_take_go_to_stderr(browser, fakes, tmp_p
     browser.options = {"fail_on": {CLEANUP: "0 elements match"}}
     assert cli.main(["animate", str(write_board(tmp_path))]) == 0
     assert f"howto: warning: cleanup[1]: {CLEANUP}: 0 elements match" in capsys.readouterr().err
+
+
+CALM = "A calm man in his thirties"
+
+
+def make_voice(name="narrator", description=CALM, *more):
+    return cli.main(["voice", name, description, *more])
+
+
+def test_voice_makes_a_voice_and_prints_its_clip(fakes, capsys):
+    assert make_voice() == 0
+    clip = fakes.sandbox.voices / "narrator.wav"
+    assert capsys.readouterr().out.strip() == str(clip)
+    assert wav_duration(clip) > 0
+    (call,) = fakes.tts.calls()
+    assert call[call.index("--design") + 1] == CALM
+
+
+def test_voice_text_sets_the_words_of_the_clip(fakes):
+    assert make_voice("narrator", CALM, "--text", "Hello there.") == 0
+    assert fakes.tts.spoken() == ["Hello there."]
+
+
+def test_voice_keeps_an_existing_voice_unless_told(fakes, capsys):
+    assert make_voice() == 0
+    assert make_voice("narrator", "A bright young woman") == 1
+    assert "--replace" in capsys.readouterr().err
+    assert make_voice("narrator", "A bright young woman", "--replace") == 0
+    assert cli.main(["voice", "narrator"]) == 0
+    assert "A bright young woman" in capsys.readouterr().out
+
+
+def test_voice_alone_lists_the_voices(fakes, capsys):
+    make_voice("zoe", "A bright young woman")
+    make_voice("adam")
+    capsys.readouterr()
+    assert cli.main(["voice"]) == 0
+    assert capsys.readouterr().out.splitlines() == [f"adam  {CALM}", "zoe  A bright young woman"]
+
+
+def test_voice_alone_with_no_voices_says_how_to_make_one(fakes, capsys):
+    assert cli.main(["voice"]) == 0
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert 'howto voice NAME "' in captured.err
+
+
+def test_voice_with_a_name_shows_that_voice(fakes, capsys):
+    make_voice()
+    capsys.readouterr()
+    assert cli.main(["voice", "narrator"]) == 0
+    shown = capsys.readouterr().out.splitlines()
+    assert shown[0] == str(fakes.sandbox.voices / "narrator.wav")
+    assert f"description: {CALM}" in shown and any(line.startswith("text: This is the voice") for line in shown)
+
+
+def test_voice_with_an_unknown_name_exits_1(fakes, capsys):
+    assert cli.main(["voice", "nobody"]) == 1
+    assert "is not made yet" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("arguments", [["../escape", CALM], ["narrator", ""], ["narrator", CALM, "--text", " "]])
+def test_bad_voice_arguments_exit_2(fakes, arguments):
+    assert cli.main(["voice", *arguments]) == 2
+    assert fakes.tts.calls() == []
+
+
+def test_replace_and_text_need_a_description(fakes):
+    assert cli.main(["voice", "narrator", "--replace"]) == 2
+    assert cli.main(["voice", "--text", "Hello."]) == 2
+
+
+def test_render_speaks_in_the_voice_of_the_storyboard(browser, fakes, tmp_path):
+    make_voice()
+    assert cli.main(["render", str(write_board(tmp_path, voice="narrator"))]) == 0
+    spoken = fakes.tts.calls()[1:]
+    assert len(spoken) == 3
+    assert all(call[call.index("--clone") + 1] == str(fakes.sandbox.voices / "narrator.wav") for call in spoken)
+
+
+def test_narrate_speaks_in_the_voice_of_the_storyboard(browser, fakes, tmp_path):
+    make_voice()
+    assert cli.main(["narrate", str(write_board(tmp_path, voice="narrator"))]) == 0
+    assert all("--clone" in call for call in fakes.tts.calls()[1:])
+
+
+@pytest.mark.parametrize("command", ["render", "narrate"])
+def test_a_voice_that_is_not_made_stops_before_anything_is_spoken(browser, fakes, tmp_path, capsys, command):
+    assert cli.main([command, str(write_board(tmp_path, voice="narrator"))]) == 1
+    assert 'howto voice narrator "' in capsys.readouterr().err
+    assert fakes.tts.calls() == [] and browser.opened == 0
+
+
+def test_animate_does_not_need_the_voice(browser, fakes, tmp_path):
+    # Nothing is spoken in a picture, so a voice that is not made is no obstacle.
+    assert cli.main(["animate", str(write_board(tmp_path, voice="narrator"))]) == 0
+    assert fakes.tts.calls() == []
+
+
+def test_probe_does_not_need_the_voice(browser, fakes, tmp_path):
+    assert cli.main(["probe", str(write_board(tmp_path, voice="narrator"))]) == 0

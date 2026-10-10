@@ -24,7 +24,7 @@ STRING_ACTIONS = ("goto", "press")
 MARK_ACTIONS = ("box", "circle", "underline", "spotlight", "arrow")
 # The marks that can show a few words. `text` already names an element, so the key is `note`.
 NOTED_MARKS = ("arrow",)
-TOP_FIELDS = ("title", "url", "steps", "profile", "viewport", "setup", "cleanup", "pace", "zoom", "crop")
+TOP_FIELDS = ("title", "url", "steps", "profile", "viewport", "setup", "cleanup", "pace", "zoom", "crop", "voice")
 STEP_FIELDS = ("say", "do", "chapter", "note", "pause", "zoom")
 # How far the picture may be enlarged. At 4 a 1920-pixel page shows 480 pixels.
 MAX_ZOOM = 4.0
@@ -141,6 +141,8 @@ class Storyboard:
     zoom: float = 1.0
     # The part of the page that an animated picture is cut to. None is the whole window.
     crop: Locator | None = None
+    # The name of the voice that speaks the narration. None is the speech command's own voice.
+    voice: str | None = None
 
     @property
     def name(self) -> str:
@@ -350,23 +352,27 @@ def parse(data: object, path: Path) -> Storyboard:
     steps = data["steps"]
     if not isinstance(steps, list) or not steps:
         raise StoryboardError("`steps` must be a list with at least one step")
-    profile = data.get("profile")
-    if profile is not None:
-        profile = _text(profile, "`profile`")
-        if not PROFILE_RE.match(profile):
-            raise StoryboardError("`profile`: use letters, digits, `-` and `_` only")
+    # Both name a directory entry of howto's own, so neither may leave its directory.
+    names = {}
+    for field in ("profile", "voice"):
+        names[field] = data.get(field)
+        if names[field] is not None:
+            names[field] = _text(names[field], f"`{field}`")
+            if not PROFILE_RE.match(names[field]):
+                raise StoryboardError(f"`{field}`: use letters, digits, `-` and `_` only")
     storyboard = Storyboard(
         path=path,
         title=_text(data["title"], "`title`"),
         url=_text(data["url"], "`url`"),
         steps=tuple(parse_step(step, n) for n, step in enumerate(steps, 1)),
-        profile=profile,
+        profile=names["profile"],
         viewport=_parse_viewport(data.get("viewport")),
         setup=_parse_actions(data.get("setup"), "", "setup"),
         cleanup=_parse_actions(data.get("cleanup"), "", "cleanup"),
         pace=_parse_pace(data.get("pace")),
         zoom=_parse_zoom(data["zoom"], "") if "zoom" in data else 1.0,
         crop=parse_locator(data["crop"], "`crop`") if data.get("crop") is not None else None,
+        voice=names["voice"],
     )
     if storyboard.crop is not None:
         # A crop is one fixed part of the window, and a zoom moves the page under it.

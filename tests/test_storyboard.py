@@ -214,6 +214,8 @@ def test_pace_carries_the_time_a_mark_is_held():
         (one_step({"do": [{"click": {"label": "x", "exact": "yes"}}]}), "`exact` must be true or false"),
         (one_step({"say": "Hi.", "pause": -1}), "step 1: `pause` must be a number, 0 or more"),
         (board(profile="../escape"), "`profile`: use letters, digits, `-` and `_` only"),
+        (board(voice="../escape"), "`voice`: use letters, digits, `-` and `_` only"),
+        (board(voice=""), "`voice`: must be non-empty text"),
         (board(pace={"led": 1}), "`pace`: unknown value `led`"),
         (board(pace={"typing": 0}), "`pace`: `typing` must be more than 0"),
         (board(pace={"gap": -1}), "`pace`: `gap` must be 0 or more"),
@@ -335,3 +337,11 @@ def test_a_malformed_pace_number_is_refused(tmp_path):
     path.write_text("title: T\nurl: http://demo.test\npace: {typing: fast}\nsteps:\n  - say: Hi.\n", encoding="utf-8")
     with pytest.raises(StoryboardError, match="`pace`: `typing` must be a number"):
         load(path)
+
+
+def test_a_storyboard_names_its_voice():
+    assert parse(board(voice="narrator"), Path("x.yaml")).voice == "narrator"
+
+
+def test_a_storyboard_without_a_voice_has_none():
+    assert parse(board(), Path("x.yaml")).voice is None

@@ -1,4 +1,4 @@
-"""The `howto` command: login, probe, narrate, render, animate."""
+"""The `howto` command: login, probe, narrate, render, animate, voice."""
 from __future__ import annotations
 
 import argparse
@@ -12,9 +12,10 @@ from pathlib import Path
 import yaml
 
 from . import assemble as assembling
+from . import voices
 from .animation import FORMATS, animate
 from .errors import HowtoError, RunError, StoryboardError
-from .narrate import narrate
+from .narrate import narrate, tts_command
 from .probe import format_report
 from .runner import Interrupt, RealClock, RunResult, run_probe, run_take
 from .storyboard import PROFILE_RE, Storyboard, load, parse_locator, read_yaml
@@ -32,6 +33,15 @@ def cache_dir() -> Path:
 
 def profiles_dir() -> Path:
     return data_dir() / "profiles"
+
+
+def voices_dir() -> Path:
+    return data_dir() / "voices"
+
+
+def _voice(storyboard: Storyboard) -> voices.Voice | None:
+    """The voice that the storyboard names. One that is not made yet is an error, before anything is spoken."""
+    return voices.load(voices_dir(), storyboard.voice) if storyboard.voice else None
 
 
 # Playwright is imported only when a browser is needed. `howto --help` and
@@ -113,7 +123,7 @@ def cmd_probe(args: argparse.Namespace) -> int:
 def cmd_narrate(args: argparse.Namespace) -> int:
     storyboard = load(Path(args.storyboard))
     ffmpeg = find_tool("ffmpeg", "HOWTO_FFMPEG")
-    clips = narrate(storyboard, cache_dir=cache_dir() / "clips", ffmpeg=ffmpeg)
+    clips = narrate(storyboard, cache_dir=cache_dir() / "clips", ffmpeg=ffmpeg, voice=_voice(storyboard))
     if not clips:
         raise StoryboardError(f"{storyboard.path}: no step has `say`")
     steps, length = narration_only(clips, storyboard.pace.sentence_gap, storyboard.pace.gap)
@@ -153,7 +163,7 @@ def cmd_render(args: argparse.Namespace) -> int:
     ffmpeg = find_tool("ffmpeg", "HOWTO_FFMPEG")
     ffprobe = find_tool("ffprobe", "HOWTO_FFPROBE")
     # Narration first: a `tts` failure must stop the render before the browser starts.
-    clips = narrate(storyboard, cache_dir=cache_dir() / "clips", ffmpeg=ffmpeg)
+    clips = narrate(storyboard, cache_dir=cache_dir() / "clips", ffmpeg=ffmpeg, voice=_voice(storyboard))
     work = _work_dir(storyboard)
     keep = args.keep_work
     try:
@@ -233,6 +243,42 @@ def cmd_animate(args: argparse.Namespace) -> int:
             shutil.rmtree(work, ignore_errors=True)
 
 
+def cmd_voice(args: argparse.Namespace) -> int:
+    directory = voices_dir()
+    designing = args.name is not None and args.description is not None
+    if not designing and (args.text is not None or args.replace):
+        raise StoryboardError("`--text` and `--replace` go with a name and a description")
+    if args.name is None:
+        found = voices.listing(directory)
+        for voice in found:
+            print(f"{voice.name}  {voice.description or '(a clip that was not designed)'}")
+        if not found:
+            print('howto: no voice is made yet. Make one with: howto voice NAME "a description of the voice"', file=sys.stderr)
+        return 0
+    if not PROFILE_RE.match(args.name):
+        raise StoryboardError("voice: use letters, digits, `-` and `_` only")
+    if not designing:
+        voice = voices.load(directory, args.name)
+        print(voice.clip)
+        print(f"description: {voice.description}")
+        print(f"text: {voice.text}")
+        return 0
+    if not args.description.strip():
+        raise StoryboardError("voice: the description is empty")
+    if args.text is not None and not args.text.strip():
+        raise StoryboardError("--text is empty")
+    voice = voices.design(
+        args.name,
+        args.description,
+        directory=directory,
+        command=tts_command(),
+        text=args.text or voices.SAMPLE,
+        replace=args.replace,
+    )
+    print(voice.clip)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="howto", description="Narrated how-to videos and animated pictures of a web app, from a storyboard."
@@ -270,6 +316,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_animate.add_argument("--format", choices=("gif", "webp", "both"), default="both", help="which files to write (default both)")
     p_animate.add_argument("--keep-work", action="store_true", help="keep the intermediate files")
     p_animate.set_defaults(func=cmd_animate)
+
+    p_voice = commands.add_parser(
+        "voice", help="make a voice for the narration from a description, or list the voices",
+        description="With a name and a description: make that voice. With a name: show it. With nothing: list the voices.",
+    )
+    p_voice.add_argument("name", nargs="?")
+    p_voice.add_argument("description", nargs="?", help="what the voice is like, in plain words")
+    p_voice.add_argument("--text", metavar="WORDS", help="what the voice says in its clip (default: two sentences of a video)")
+    p_voice.add_argument("--replace", action="store_true", help="make an existing voice anew")
+    p_voice.set_defaults(func=cmd_voice)
     return parser
 
 

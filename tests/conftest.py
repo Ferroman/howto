@@ -1,6 +1,7 @@
 """Shared fixtures: a sandbox for howto's state, and fake tts, ffmpeg, ffprobe and img2webp programs."""
 from __future__ import annotations
 
+import json
 import stat
 import sys
 import textwrap
@@ -10,8 +11,12 @@ from types import SimpleNamespace
 import pytest
 
 FAKE_TTS = '''
-    """Stands in for `tts`: writes a tone of 0.06 s per character and logs each call."""
-    import math, os, struct, sys, wave
+    """Stands in for `tts`: writes a tone of 0.06 s per character and logs each call.
+
+    A designed voice is a tone of another pitch for each description, so that
+    two voices are two different files.
+    """
+    import json, math, os, struct, sys, wave
 
     args = sys.argv[1:]
     out = args[args.index("-o") + 1]
@@ -20,16 +25,21 @@ FAKE_TTS = '''
     if log:
         with open(log, "a", encoding="utf-8") as handle:
             handle.write(text + "\\n")
+        with open(log + ".args", "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(args) + "\\n")
     if os.environ.get("FAKE_TTS_FAIL"):
         sys.stderr.write("fake-tts: told to fail\\n")
         sys.exit(3)
+    if os.environ.get("FAKE_TTS_SILENT"):
+        sys.exit(0)
     rate = 22_050
     frames = int(rate * 0.06 * len(text))
+    pitch = 8 + len(args[args.index("--design") + 1]) % 7 if "--design" in args else 8
     with wave.open(out, "wb") as wav:
         wav.setnchannels(1)
         wav.setsampwidth(2)
         wav.setframerate(rate)
-        wav.writeframes(b"".join(struct.pack("<h", int(8000 * math.sin(i / 8))) for i in range(frames)))
+        wav.writeframes(b"".join(struct.pack("<h", int(8000 * math.sin(i / pitch))) for i in range(frames)))
 '''
 
 FAKE_FFMPEG = '''
@@ -113,7 +123,7 @@ def sandbox(tmp_path, monkeypatch):
     monkeypatch.setenv("HOWTO_CACHE_DIR", str(cache))
     monkeypatch.setenv("HOWTO_DATA_DIR", str(data))
     monkeypatch.delenv("HOWTO_ACTION_TIMEOUT", raising=False)
-    return SimpleNamespace(cache=cache, data=data, clips=cache / "clips", work=cache / "work")
+    return SimpleNamespace(cache=cache, data=data, clips=cache / "clips", work=cache / "work", voices=data / "voices")
 
 
 @pytest.fixture
@@ -124,11 +134,19 @@ def fake_tts(tmp_path, monkeypatch, sandbox):
     monkeypatch.setenv("HOWTO_TTS", str(program))
     monkeypatch.setenv("FAKE_TTS_LOG", str(log))
     monkeypatch.delenv("FAKE_TTS_FAIL", raising=False)
+    monkeypatch.delenv("FAKE_TTS_SILENT", raising=False)
+    arguments = Path(f"{log}.args")
 
     def spoken() -> list[str]:
         return log.read_text(encoding="utf-8").splitlines() if log.exists() else []
 
-    return SimpleNamespace(program=str(program), spoken=spoken)
+    def calls() -> list[list[str]]:
+        """The arguments of every call."""
+        if not arguments.exists():
+            return []
+        return [json.loads(line) for line in arguments.read_text(encoding="utf-8").splitlines()]
+
+    return SimpleNamespace(program=str(program), spoken=spoken, calls=calls)
 
 
 @pytest.fixture
