@@ -152,3 +152,45 @@ def test_a_storyboard_with_zoom_probes_and_renders(chromium, site_url, fake_tts,
     assert abs(float(shown.stdout) - steps[-1]["end"]) <= 0.5
     # The second step holds one click: the way in, the hold and the way out make it longer than its narration.
     assert steps[1]["end"] - steps[1]["start"] > 2.5
+
+
+def test_a_storyboard_with_marks_probes_and_renders(chromium, site_url, fake_tts, real_ffmpeg, sandbox, tmp_path, capsys):
+    data = {
+        "title": "Invite a teammate",
+        "url": f"{site_url}/settings.html",
+        "zoom": 2,
+        "steps": [
+            {
+                "say": "Pending invitations are listed here.",
+                "do": [{"spotlight": {"role": "region", "name": "Pending invitations"}}],
+            },
+            {
+                "say": "Type the email. Then press Invite.",
+                "do": [
+                    {"box": {"label": "Email address"}},
+                    {"fill": {"label": "Email address", "value": "sam@example.com"}},
+                    {"arrow": {"role": "button", "name": "Invite", "note": "Sends the email"}},
+                    {"click": {"role": "button", "name": "Invite"}},
+                ],
+            },
+            {"say": "The invitation is on its way.", "do": [{"circle": {"role": "heading", "name": "Invitation sent"}}]},
+        ],
+    }
+    path = tmp_path / "videos" / "demo.yaml"
+    path.parent.mkdir(exist_ok=True)
+    path.write_text(yaml.safe_dump(data), encoding="utf-8")
+
+    assert cli.main(["probe", str(path)]) == 0
+    out = capsys.readouterr().out
+    assert 'step 2 ok      box label="Email address"; fill' in out
+    assert 'arrow role=button name="Invite" note="Sends the email"' in out
+    assert 'heading "Invitation sent"' in out
+
+    assert cli.main(["render", str(path), "--keep-work"]) == 0
+    (work,) = sandbox.work.iterdir()
+    steps = json.loads((work / "timeline.json").read_text())["steps"]
+    shown = subprocess.run(
+        [real_ffmpeg[1], "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(path.parent / "demo.mp4")],
+        capture_output=True, text=True, check=True,
+    )
+    assert abs(float(shown.stdout) - steps[-1]["end"]) <= 0.5

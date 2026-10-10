@@ -377,3 +377,187 @@ def test_a_click_is_marked_where_the_zoomed_target_is(chromium, site_url, tmp_pa
         stage.stop_recording()
     # Enlarged, the Corner button is centred on (1120, 640). Playwright's red dot must be there.
     assert max(redness(video, x=1106, y=626, width=28, height=28)) > 40
+
+
+SAVE = {"role": "button", "name": "Save"}
+# Where each kind of mark puts its stroke for the Save button of marks.html,
+# which is 160 by 40 pixels at (560, 340): a small region that the stroke crosses.
+STROKES = {
+    "box": dict(x=580, y=328, width=120, height=8),  # the top edge, 8 pixels above the button
+    "circle": dict(x=508, y=350, width=20, height=20),  # where the loop passes on the left
+    "underline": dict(x=580, y=380, width=120, height=14),
+    "arrow": dict(x=760, y=352, width=100, height=30),  # the shaft, which comes from the right
+}
+
+
+def marks_take(tmp_path, site_url, page, do, *, note=None, after=None):
+    """A take in which marks are drawn, shown for a moment and taken away. Returns the video."""
+    sb = board(tmp_path, f"{site_url}/{page}", [{"do": do}], viewport="1280x720")
+    video = tmp_path / "take.webm"
+    with open_stage(sb, profiles_dir=tmp_path / "profiles") as stage:
+        stage.start_recording(video)
+        if note:
+            stage.show_note(note)
+        time.sleep(0.5)
+        for action in sb.steps[0].do:
+            stage.mark(action, True)
+        time.sleep(0.5)
+        if after:
+            after(stage)
+        stage.clear_marks(True)
+        time.sleep(0.5)
+        stage.stop_recording()
+    return video
+
+
+@pytest.mark.parametrize("kind", ["box", "circle", "underline", "arrow"])
+def test_a_mark_is_drawn_at_its_target_and_goes_again(chromium, site_url, tmp_path, kind):
+    video = marks_take(tmp_path, site_url, "marks.html", [{kind: SAVE}])
+    stroke = redness(video, **STROKES[kind])
+    assert stroke[0] < 5, "the take starts with the mark"
+    assert max(stroke) > 20, "the mark is not in the picture"
+    assert stroke[-1] < 5, "the mark is still in the last frame"
+    # The mark is beside the control, never on it.
+    assert max(redness(video, x=600, y=350, width=80, height=20)) < 5
+
+
+def test_a_stroke_is_drawn_and_does_not_just_appear(chromium, site_url, tmp_path):
+    video = marks_take(tmp_path, site_url, "marks.html", [{"box": SAVE}])
+    stroke = redness(video, **STROKES["box"])
+    full = max(stroke)
+    drawn = stroke[: stroke.index(full)]
+    assert any(5 < level < 0.8 * full for level in drawn), "the stroke is a cut, not a movement"
+
+
+def test_a_spotlight_darkens_everything_but_its_target(chromium, site_url, tmp_path):
+    video = marks_take(tmp_path, site_url, "marks.html", [{"spotlight": SAVE}])
+    elsewhere = brightness(video, x=900, y=560, width=60, height=60)  # white page
+    target = brightness(video, x=600, y=350, width=80, height=20)  # the face of the button
+    assert elsewhere[0] > 240 and elsewhere[-1] > 240
+    assert min(elsewhere) < 140, "the page did not go dark"
+    assert min(target) > target[0] - 10, "the target went dark with the page"
+
+
+def test_a_note_stays_bright_under_a_spotlight(chromium, site_url, tmp_path):
+    video = marks_take(tmp_path, site_url, "marks.html", [{"spotlight": SAVE}], note="Valid for seven days")
+    # The note is a dark box at the bottom centre. Next to it the page is white.
+    page = brightness(video, x=100, y=630, width=120, height=24)
+    note = brightness(video, x=580, y=630, width=120, height=24)
+    assert min(page) < 140, "the page did not go dark"
+    shown = [level for level in note if level < 200]  # the frames in which the note is there
+    # The note lets a little of the page through, so it darkens a little with
+    # it, to about 0.8 of what it was. Under the spotlight it would be at 0.45.
+    assert min(shown) > 0.7 * shown[0], "the spotlight lies on top of the note"
+
+
+def test_an_arrow_comes_from_a_side_that_is_free(chromium, site_url, tmp_path):
+    # The Lonely button is at the left edge, so the arrow would come from the
+    # right, where a block of text is. Below it is another button.
+    video = marks_take(tmp_path, site_url, "marks.html", [{"arrow": {"role": "button", "name": "Lonely"}}])
+    assert max(redness(video, x=155, y=190, width=25, height=120)) > 15, "no arrow from above"
+    assert max(redness(video, x=250, y=345, width=130, height=30)) < 5, "the arrow lies across the text"
+
+
+def test_the_words_of_an_arrow_are_in_the_picture(chromium, site_url, tmp_path):
+    video = marks_take(tmp_path, site_url, "marks.html", [{"arrow": {**SAVE, "note": "Keeps your changes"}}])
+    # The tail is at (884, 360), and the words hang on it in a red box.
+    words = redness(video, x=900, y=352, width=30, height=16)
+    assert max(words) > 100 and words[-1] < 5
+
+
+def test_a_mark_lands_on_its_target_while_the_page_is_zoomed(chromium, site_url, tmp_path):
+    sb = board(tmp_path, f"{site_url}/zoom.html", [{"do": [{"box": {"role": "button", "name": "Corner"}}]}], viewport="1280x720")
+    (box,) = sb.steps[0].do
+    video = tmp_path / "take.webm"
+    with open_stage(sb, profiles_dir=tmp_path / "profiles") as stage:
+        stage.start_recording(video)
+        stage.zoom_to(box, 2, True)
+        stage.mark(box, True)
+        time.sleep(0.4)
+        stage.clear_marks(True)
+        stage.zoom_out(True)
+        stage.stop_recording()
+    # Enlarged, the Corner button is 240 by 80 pixels at (1000, 600). The top edge of its box is 8 pixels above.
+    assert max(redness(video, x=1040, y=588, width=160, height=8)) > 20
+    # At the page's own size the button is at (1140, 660), and nothing was drawn there.
+    assert max(redness(video, x=1150, y=648, width=80, height=8)) < 5
+
+
+def test_the_picture_holds_still_under_a_mark_while_the_next_target_is_in_it(chromium, site_url, tmp_path):
+    sb = board(
+        tmp_path,
+        f"{site_url}/zoom.html",
+        [{"do": [{"box": {"role": "button", "name": "Centre"}}, {"click": {"css": "#red"}}, button("Corner")]}],
+        viewport="1280x720",
+    )
+    box, near, far = sb.steps[0].do
+    video = tmp_path / "take.webm"
+    with open_stage(sb, profiles_dir=tmp_path / "profiles") as stage:
+        stage.start_recording(video)
+        stage.zoom_to(box, 2, False)
+        stage.mark(box, True)
+        # The red block is in the picture already. Moving to it would leave the box behind.
+        stage.zoom_to(near, 2, False)
+        assert close_to(box_of(stage, "Centre"), Box(520, 320, 240, 80))
+        time.sleep(0.3)
+        # The Corner button is not, so the picture has to move, and the box cannot come along.
+        stage.zoom_to(far, 2, True)
+        assert close_to(box_of(stage, "Corner"), Box(1000, 600, 240, 80))
+        time.sleep(0.3)
+        stage.stop_recording()
+    # The top edge of the box around the enlarged Centre button.
+    edge = redness(video, x=560, y=308, width=160, height=8)
+    assert max(edge) > 20, "the box was never drawn"
+    assert edge[-1] < 5, "the box stayed where it was while the picture moved"
+
+
+def test_marks_do_not_outlive_the_page_they_were_drawn_on(chromium, site_url, tmp_path):
+    sb = board(tmp_path, f"{site_url}/index.html", [{"do": [{"box": {"role": "button", "name": "Settings"}}, SETTINGS]}], viewport="1280x720")
+    box, click = sb.steps[0].do
+    video = tmp_path / "take.webm"
+    with open_stage(sb, profiles_dir=tmp_path / "profiles") as stage:
+        at = box_of(stage, "Settings")
+        stage.start_recording(video)
+        stage.mark(box, True)
+        time.sleep(0.3)
+        stage.perform(click, Pace())
+        stage.clear_marks(True)
+        stage.page.wait_for_url("**/settings.html")
+        time.sleep(0.5)
+        stage.stop_recording()
+    edge = redness(video, x=round(at.x), y=round(at.y) - 12, width=round(at.width), height=8)
+    assert max(edge) > 20, "the box was never drawn"
+    assert edge[-1] < 5, "the box is drawn on the next page"
+
+
+def test_a_mark_brings_its_target_into_view(chromium, site_url, tmp_path):
+    sb = board(tmp_path, f"{site_url}/marks.html", [{"do": [{"circle": {"role": "button", "name": "Far"}}]}], viewport="1280x720")
+    with open_stage(sb, profiles_dir=tmp_path / "profiles") as stage:
+        assert box_of(stage, "Far").y > 720
+        stage.mark(sb.steps[0].do[0], False)
+        after = box_of(stage, "Far")
+    assert 0 <= after.y and after.y + after.height <= 720
+
+
+def test_taking_the_marks_away_leaves_the_page_as_it_was(chromium, site_url, tmp_path):
+    sb = board(tmp_path, f"{site_url}/zoom.html", [{"do": [{"circle": {"role": "button", "name": "Centre"}}]}], viewport="1280x720")
+    with open_stage(sb, profiles_dir=tmp_path / "profiles") as stage:
+        styles = stage.page.evaluate(STYLES)
+        stage.start_recording(tmp_path / "take.webm")
+        stage.mark(sb.steps[0].do[0], True)
+        stage.clear_marks(True)
+        stage.stop_recording()
+        assert stage.page.evaluate(STYLES) == styles
+
+
+def test_a_probe_looks_for_the_element_of_each_mark(chromium, site_url, tmp_path, monkeypatch):
+    monkeypatch.setenv("HOWTO_ACTION_TIMEOUT", "1")
+
+    def outcome(mark):
+        sb = board(tmp_path, f"{site_url}/settings.html", [{"do": [mark]}])
+        with open_stage(sb, profiles_dir=tmp_path / "profiles") as stage:
+            return run_probe(sb, stage).failed
+
+    assert outcome({"arrow": {"role": "button", "name": "Invite", "note": "Sends the email"}}) is None
+    assert outcome({"circle": {"role": "button", "name": "Remove"}}).error == 'circle role=button name="Remove": 2 elements match'
+    assert outcome({"box": {"role": "button", "name": "Nope"}}).error == 'box role=button name="Nope": 0 elements match'

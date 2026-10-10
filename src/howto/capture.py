@@ -16,7 +16,7 @@ from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page, sync_playwright
 from playwright.sync_api import TimeoutError as PlaywrightTimeout
 
-from . import zoom
+from . import marks, zoom
 from .errors import RunError
 from .probe import cut_outline
 from .runner import Interrupt, PageReport, StepFailed
@@ -27,8 +27,10 @@ DEFAULT_TIMEOUT = 10.0
 # reports a new tab only some 0.1 to 0.2 s after the click that opened it, and
 # there is no event that says "no tab is coming", so the wait is a fixed one.
 SETTLE_MS = 300
+# The note has a z-index because a spotlight would otherwise darken it: the
+# marks are shown after it, and what is shown later lies on top.
 NOTE_STYLE = (
-    "position:fixed;left:50%;bottom:48px;transform:translateX(-50%);max-width:70%;"
+    "position:fixed;z-index:2;left:50%;bottom:48px;transform:translateX(-50%);max-width:70%;"
     "padding:14px 22px;border-radius:10px;background:rgba(20,20,24,.88);color:#fff;"
     "font:500 22px/1.35 system-ui,sans-serif;box-shadow:0 6px 24px rgba(0,0,0,.35)"
 )
@@ -114,6 +116,29 @@ ZOOM_END = """() => {
   delete window.__howtoZoom;
 }"""
 
+# Marks are overlays, like the note: children of <html> in screen pixels. They
+# do not move with the page, so whatever moves the picture takes them away
+# first. See `marks` for how they are drawn.
+#
+# For each list of points, the number that lie on something worth seeing: a
+# control, a picture, or an element that holds text of its own. An arrow is
+# drawn on the side where that number is lowest. Playwright's own layer takes
+# no pointer events, so elementFromPoint looks through it at the page.
+MARK_BUSY = """(candidates) => {
+  const busy = (x, y) => {
+    if (x < 4 || y < 4 || x > innerWidth - 4 || y > innerHeight - 4) return true;
+    const element = document.elementFromPoint(x, y);
+    if (!element || element === document.body || element === document.documentElement) return false;
+    if (element.closest('button,a,input,select,textarea,label,img,svg,canvas,video,[role=button],[role=link],[role=tab]')) return true;
+    return Array.from(element.childNodes).some((node) => node.nodeType === 3 && node.textContent.trim());
+  };
+  return candidates.map((points) => points.filter(([x, y]) => busy(x, y)).length);
+}"""
+# The marks are in a closed shadow root that the page cannot reach. A custom
+# property on <html> is inherited there, and the marks take their opacity from it.
+MARK_FADE = "(property) => document.documentElement.style.setProperty(property, '0')"
+MARK_FADED = "(property) => document.documentElement.style.removeProperty(property)"
+
 
 def action_timeout() -> float:
     """Seconds an element gets to appear."""
@@ -193,6 +218,7 @@ class PlaywrightStage:
         self._interrupt = interrupt or Interrupt()
         self._label_rule = None
         self._note = None
+        self._marks: list = []
         self._dialogs: list[str] = []
         self._unzoomable: list[str] = []
         self._tabs: list[Page] = []
@@ -286,9 +312,68 @@ class PlaywrightStage:
         """Back to the page's own size. Does nothing on a page that is not zoomed."""
         self._interrupt.check()
         try:
+            self._clear_marks(animate)
             self._zoom_out(animate)
         finally:
             self._interrupt.check()
+
+    def mark(self, action: Action, draw: bool) -> None:
+        """Draws a mark at the element an action names. Without `draw` it only finds the element, as a probe does."""
+        self._interrupt.check()
+        try:
+            self._mark(action, draw)
+        except PlaywrightError as exc:
+            raise StepFailed(f"{action.describe()}: {failure_reason(str(exc))}") from None
+        finally:
+            self._interrupt.check()
+
+    def clear_marks(self, animate: bool) -> None:
+        """Takes every mark off the picture. Without `animate` they are gone at once."""
+        self._interrupt.check()
+        try:
+            self._clear_marks(animate)
+        finally:
+            self._interrupt.check()
+
+    def _mark(self, action: Action, draw: bool) -> None:
+        target = self._one(action)
+        box = self._box(target)
+        if box is not None and not zoom.on_screen(box, self.viewport):
+            # A scroll moves the page under the marks that are already there.
+            self._clear_marks(draw)
+            target.scroll_into_view_if_needed(timeout=self.timeout_ms)
+            box = self._box(target)
+        if not draw or box is None:
+            return
+        if action.kind == "arrow":
+            candidates = marks.arrows(box, self.viewport, action.value)
+            busy = self.page.evaluate(MARK_BUSY, [[list(point) for point in candidate.points] for candidate in candidates])
+            drawing = marks.arrow(marks.emptiest(candidates, busy))
+        else:
+            drawing = marks.SHAPES[action.kind](box, self.viewport)
+        self._marks.append(self.page.screencast.show_overlay(marks.layer(drawing, self.viewport)))
+        self.page.wait_for_timeout(marks.DRAW_MS)
+
+    def _clear_marks(self, animate: bool) -> None:
+        if not self._marks:
+            return
+        # Each call may meet a page that an action has just replaced. The marks
+        # of the old page went with it, and the list must end up empty anyway.
+        if animate:
+            try:
+                self.page.evaluate(MARK_FADE, marks.FADE_PROPERTY)
+                self.page.wait_for_timeout(marks.FADE_MS + 30)
+            except PlaywrightError:
+                pass
+        while self._marks:
+            try:
+                _remove(self._marks.pop())
+            except PlaywrightError:
+                pass
+        try:
+            self.page.evaluate(MARK_FADED, marks.FADE_PROPERTY)
+        except PlaywrightError:
+            pass
 
     def _box(self, target) -> zoom.Box | None:
         """Where an element is on the screen. None for an element that is not drawn."""
@@ -298,6 +383,12 @@ class PlaywrightStage:
     def _zoom_to(self, action: Action, factor: float, animate: bool) -> None:
         target = self._one(action)
         box = self._box(target)
+        if self._marks and box is not None and zoom.on_screen(box, self.viewport):
+            # The picture holds still while something is drawn on it, as long
+            # as the next target is in it.
+            return
+        # From here on the picture may move, and a mark would stay behind.
+        self._clear_marks(animate)
         state = self.page.evaluate(ZOOM_STATE)
         if box is not None and state is not None:
             box = zoom.Window(**state).to_page(box)

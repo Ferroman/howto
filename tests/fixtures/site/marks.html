@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Demo - Marks</title>
+<style>
+  /* A white page that fills a 1280x720 window, with every element at a known
+     place, so a test can say where a mark must be drawn. Nothing on it is red. */
+  html, body { height: 100%; margin: 0; }
+  body { font: 16px sans-serif; background: #fff; }
+  #app { position: absolute; inset: 0; overflow: auto; }
+  #app > * { position: absolute; margin: 0; }
+  button { width: 160px; height: 40px; }
+  /* In the middle of the window, with nothing around it. */
+  #save { left: 560px; top: 340px; }
+  /* At the left edge. Its right side is taken by a block of text and its
+     underside by a button, so the first free side for an arrow is above. */
+  #lonely { left: 100px; top: 340px; width: 120px; }
+  #wall { left: 240px; top: 150px; width: 260px; height: 420px; background: #dde; }
+  #under { left: 100px; top: 450px; width: 120px; }
+  /* Below the first screen. */
+  #far { left: 40px; top: 1500px; }
+</style></head>
+<body>
+<div id="app">
+<button id="save" type="button" onclick="document.title = 'Save was clicked'">Save</button>
+<button id="lonely" type="button">Lonely</button>
+<p id="wall">Notes about the team.</p>
+<button id="under" type="button">Under</button>
+<button id="far" type="button">Far</button>
+</div>
+</body>
+</html>
