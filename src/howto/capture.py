@@ -19,7 +19,7 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeout
 from . import marks, zoom
 from .errors import RunError
 from .probe import cut_outline
-from .runner import Interrupt, PageReport, StepFailed
+from .runner import POINTER_ACTIONS, Interrupt, PageReport, StepFailed
 from .storyboard import MARK_ACTIONS, Action, Locator, Pace, Storyboard
 
 DEFAULT_TIMEOUT = 10.0
@@ -30,10 +30,14 @@ SETTLE_MS = 300
 # The note has a z-index because a spotlight would otherwise darken it: the
 # marks are shown after it, and what is shown later lies on top.
 NOTE_STYLE = (
-    "position:fixed;z-index:2;left:50%;bottom:48px;transform:translateX(-50%);max-width:70%;"
+    "position:fixed;z-index:2;"
     "padding:14px 22px;border-radius:10px;background:rgba(20,20,24,.88);color:#fff;"
     "font:500 22px/1.35 system-ui,sans-serif;box-shadow:0 6px 24px rgba(0,0,0,.35)"
 )
+# Where the note lies in a picture of the whole window: at the bottom, in the middle.
+NOTE_PLACE = "left:50%;bottom:48px;transform:translateX(-50%);max-width:70%"
+# Pixels between a note and the edges of the crop it lies in.
+NOTE_INSET = 12
 # show_actions also writes each action's locator on the picture, for example
 # `Click get_by_role("button", name="Save")`, and has no option that turns it
 # off. An overlay may carry a style element, and this rule hides the element
@@ -124,9 +128,12 @@ ZOOM_END = """() => {
 # control, a picture, or an element that holds text of its own. An arrow is
 # drawn on the side where that number is lowest. Playwright's own layer takes
 # no pointer events, so elementFromPoint looks through it at the page.
-MARK_BUSY = """(candidates) => {
+#
+# A point outside the picture counts as well: an arrow must not leave it. The
+# picture is the window, or the part that the window is cut to.
+MARK_BUSY = """([candidates, [left, top, right, bottom]]) => {
   const busy = (x, y) => {
-    if (x < 4 || y < 4 || x > innerWidth - 4 || y > innerHeight - 4) return true;
+    if (x < left + 4 || y < top + 4 || x > right - 4 || y > bottom - 4) return true;
     const element = document.elementFromPoint(x, y);
     if (!element || element === document.body || element === document.documentElement) return false;
     if (element.closest('button,a,input,select,textarea,label,img,svg,canvas,video,[role=button],[role=link],[role=tab]')) return true;
@@ -168,8 +175,18 @@ def action_timeout() -> float:
     return seconds if seconds > 0 else DEFAULT_TIMEOUT
 
 
-def note_html(text: str) -> str:
-    return f'<div style="{NOTE_STYLE}">{html.escape(text)}</div>'
+def note_html(text: str, crop: zoom.Box | None = None) -> str:
+    """The note of a step. In a picture that is cut to `crop` it lies at the bottom of that part."""
+    place = NOTE_PLACE
+    if crop is not None:
+        # Without a width of its own the note would be folded to fit between
+        # its `left` and the edge of the window, however narrow that is.
+        place = (
+            f"left:{crop.x + crop.width / 2:g}px;top:{crop.y + crop.height - NOTE_INSET:g}px;"
+            f"transform:translate(-50%,-100%);box-sizing:border-box;"
+            f"width:max-content;max-width:{crop.width - 2 * NOTE_INSET:g}px"
+        )
+    return f'<div style="{NOTE_STYLE};{place}">{html.escape(text)}</div>'
 
 
 def resolve(scope, locator: Locator):
@@ -238,8 +255,11 @@ class PlaywrightStage:
         self._label_rule = None
         self._note = None
         self._marks: list = []
+        # The part of the window that the picture is cut to. None is the whole window.
+        self._crop: zoom.Box | None = None
         self._dialogs: list[str] = []
         self._unzoomable: list[str] = []
+        self._left_out: list[str] = []
         self._tabs: list[Page] = []
         page.on("dialog", self._on_dialog)
         page.context.on("page", self._on_tab)
@@ -261,7 +281,7 @@ class PlaywrightStage:
         self._tabs.append(tab)
 
     def _notices(self) -> tuple[str, ...]:
-        notices = self._dialogs + self._unzoomable
+        notices = self._dialogs + self._unzoomable + self._left_out
         for tab in self._tabs:
             try:
                 tab.wait_for_load_state("domcontentloaded", timeout=self.timeout_ms)
@@ -300,6 +320,8 @@ class PlaywrightStage:
                 self.page.keyboard.press(action.value)
             else:
                 target = self._one(action)
+                if action.kind in POINTER_ACTIONS:
+                    self._check_crop(action, target)
                 if action.kind == "click":
                     target.click(timeout=self.timeout_ms)
                 elif action.kind == "fill":
@@ -354,6 +376,30 @@ class PlaywrightStage:
         finally:
             self._interrupt.check()
 
+    def crop_to(self, action: Action) -> zoom.Box:
+        """Cuts the picture to the element an action names, and returns that part of the window.
+
+        The recording still shows the whole window, and whoever makes the
+        picture cuts it out. What changes here is where a note and an arrow
+        are placed: inside the part that will be seen.
+        """
+        self._interrupt.check()
+        try:
+            target = self._one(action)
+            box = self._box(target)
+            if box is not None and not zoom.on_screen(box, self.viewport):
+                target.scroll_into_view_if_needed(timeout=self.timeout_ms)
+                box = self._box(target)
+        except PlaywrightError as exc:
+            raise StepFailed(f"{action.describe()}: {failure_reason(str(exc))}") from None
+        finally:
+            self._interrupt.check()
+        crop = zoom.crop(box, self.viewport) if box is not None else None
+        if crop is None:
+            raise StepFailed(f"{action.describe()}: the element has no size, so there is no picture to cut to it")
+        self._crop = crop
+        return crop
+
     def _mark(self, action: Action, draw: bool) -> None:
         target = self._one(action)
         box = self._aim(action, target)
@@ -362,11 +408,19 @@ class PlaywrightStage:
             self._clear_marks(draw)
             target.scroll_into_view_if_needed(timeout=self.timeout_ms)
             box = self._aim(action, target)
+        self._check_crop(action, target, box)
         if not draw or box is None:
             return
         if action.kind == "arrow":
-            candidates = marks.arrows(box, self.viewport, action.value)
-            busy = self.page.evaluate(MARK_BUSY, [[list(point) for point in candidate.points] for candidate in candidates])
+            picture = self._crop or zoom.Box(0, 0, *self.viewport)
+            candidates = marks.arrows(box, self.viewport, action.value, self._crop)
+            busy = self.page.evaluate(
+                MARK_BUSY,
+                [
+                    [[list(point) for point in candidate.points] for candidate in candidates],
+                    [picture.x, picture.y, picture.x + picture.width, picture.y + picture.height],
+                ],
+            )
             drawing = marks.arrow(marks.emptiest(candidates, busy))
         else:
             drawing = marks.SHAPES[action.kind](box, self.viewport)
@@ -393,6 +447,21 @@ class PlaywrightStage:
             self.page.evaluate(MARK_FADED, marks.FADE_PROPERTY)
         except PlaywrightError:
             pass
+
+    def _check_crop(self, action: Action, target, box: zoom.Box | None = None) -> None:
+        """Keeps a note of an action whose element the crop leaves out of the picture.
+
+        The author of a storyboard is often a model that cannot look at the
+        picture, and a probe is where it learns that nothing would be seen.
+        """
+        if self._crop is None:
+            return
+        box = box or self._box(target)
+        if box is None or zoom.inside(box, self._crop):
+            return
+        notice = f"{action.describe()}: the element is not inside the crop"
+        if notice not in self._left_out:
+            self._left_out.append(notice)
 
     def _box(self, target) -> zoom.Box | None:
         """Where an element is on the screen. None for an element that is not drawn."""
@@ -472,7 +541,7 @@ class PlaywrightStage:
         self.page.screencast.show_chapter(title, duration=seconds * 1000)
 
     def show_note(self, text: str) -> None:
-        self._note = self.page.screencast.show_overlay(note_html(text))
+        self._note = self.page.screencast.show_overlay(note_html(text, self._crop))
 
     def hide_note(self) -> None:
         if self._note is not None:

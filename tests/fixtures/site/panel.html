@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Demo - Panel</title>
+<style>
+  /* A white page that fills a 1280x720 window, with a panel near its right
+     edge and every element at a known place, so a test can say where a note
+     or an arrow must be when the picture is cut to the panel. Nothing is red. */
+  html, body { height: 100%; margin: 0; }
+  body { font: 16px sans-serif; background: #fff; }
+  #app { position: absolute; inset: 0; overflow: hidden; }
+  #app > *, #panel > * { position: absolute; margin: 0; }
+  button { width: 100px; height: 40px; }
+  /* 300 by 400 pixels at (960, 100): 20 pixels from the right edge of the window. */
+  #panel { left: 960px; top: 100px; width: 300px; height: 400px; background: #eef; }
+  #apply { left: 20px; top: 20px; }
+  /* At the panel's left edge. Seen from the middle of the window, the room
+     for an arrow is on its left, which is outside the panel. */
+  #edge { left: 10px; top: 200px; }
+  #outside { left: 100px; top: 100px; }
+</style></head>
+<body>
+<div id="app">
+<aside id="panel" aria-label="Style"><button id="apply" type="button">Apply</button><button id="edge" type="button">Edge</button></aside>
+<button id="outside" type="button">Outside</button>
+</div>
+</body>
+</html>

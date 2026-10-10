@@ -3,12 +3,12 @@ import time
 
 import pytest
 
-from howto.capture import open_stage
+from howto.capture import MARK_BUSY, open_stage
 from howto.errors import RunError
-from howto.runner import run_probe
-from howto.storyboard import Pace, parse
+from howto.runner import StepFailed, run_probe
+from howto.storyboard import Action, Pace, parse
 from howto.tools import find_tool
-from howto.zoom import Box, frame
+from howto.zoom import Box, frame, inside
 
 pytestmark = pytest.mark.browser
 
@@ -595,3 +595,121 @@ def test_the_zoom_is_aimed_at_the_text_of_a_mark(chromium, site_url, tmp_path):
         # A row as wide as the page cannot be enlarged. Its text can.
         stage.zoom_to(sb.steps[0].do[0], 2, False)
         assert box_of(stage, "Invite").width == pytest.approx(2 * before.width, abs=1)
+
+
+PANEL = {"role": "complementary", "name": "Style"}
+# The panel of panel.html is 300 by 400 pixels at (960, 100). With the margin
+# of a crop, the picture ends 8 pixels from the right edge of the window.
+PANEL_CROP = Box(948, 88, 324, 424)
+EDGE = {"role": "button", "name": "Edge"}
+OUTSIDE = {"role": "button", "name": "Outside"}
+
+
+def crop_action(sb):
+    return Action(kind="crop", locator=sb.crop)
+
+
+def panel_take(tmp_path, site_url, do, *, crop=True, note=None):
+    """A take of panel.html with a note and marks, cut to the panel or not. Returns the video."""
+    extra = {"crop": PANEL} if crop else {}
+    sb = board(tmp_path, f"{site_url}/panel.html", [{"do": do}], viewport="1280x720", **extra)
+    video = tmp_path / "take.webm"
+    with open_stage(sb, profiles_dir=tmp_path / "profiles") as stage:
+        if crop:
+            stage.crop_to(crop_action(sb))
+        stage.start_recording(video)
+        if note:
+            stage.show_note(note)
+        for action in sb.steps[0].do:
+            stage.mark(action, True)
+        time.sleep(0.6)
+        stage.stop_recording()
+    return video
+
+
+def test_a_crop_is_its_element_with_a_margin(chromium, site_url, tmp_path):
+    sb = board(tmp_path, f"{site_url}/panel.html", [{"do": [{"click": EDGE}]}], viewport="1280x720", crop=PANEL)
+    with open_stage(sb, profiles_dir=tmp_path / "profiles") as stage:
+        assert stage.crop_to(crop_action(sb)) == PANEL_CROP
+
+
+def test_a_crop_that_is_out_of_sight_is_scrolled_to(chromium, site_url, tmp_path):
+    far = {"role": "button", "name": "Far"}  # 1500 pixels down the page
+    sb = board(tmp_path, f"{site_url}/marks.html", [{"do": [{"click": far}]}], viewport="1280x720", crop=far)
+    with open_stage(sb, profiles_dir=tmp_path / "profiles") as stage:
+        cut = stage.crop_to(crop_action(sb))
+        assert inside(cut, Box(0, 0, 1280, 720))
+        assert inside(Box(**stage.page.get_by_role("button", name="Far").bounding_box()), cut)
+
+
+@pytest.mark.parametrize(
+    "crop, reason",
+    [
+        ({"role": "button", "name": "Nope"}, "0 elements match"),
+        ({"role": "button"}, "3 elements match"),
+    ],
+)
+def test_a_crop_names_one_element(chromium, site_url, tmp_path, monkeypatch, crop, reason):
+    monkeypatch.setenv("HOWTO_ACTION_TIMEOUT", "1")
+    sb = board(tmp_path, f"{site_url}/panel.html", [{"do": [{"click": EDGE}]}], crop=crop)
+    with open_stage(sb, profiles_dir=tmp_path / "profiles") as stage:
+        with pytest.raises(StepFailed) as caught:
+            stage.crop_to(crop_action(sb))
+    assert str(caught.value) == f"{crop_action(sb).describe()}: {reason}"
+
+
+def test_a_note_lies_at_the_bottom_of_the_crop(chromium, site_url, tmp_path):
+    video = panel_take(tmp_path, site_url, [], note="Valid for seven days")
+    # One line of words, centred on the panel, with its lower edge at the panel's.
+    # Left of the middle by 100 pixels is still the note, as long as it was not
+    # folded to fit between its middle and the edge of the window, 170 pixels away.
+    assert min(brightness(video, x=1000, y=486, width=16, height=10)) < 120, "no note in the crop, or a folded one"
+    # Where a note lies in a picture of the whole window, the page stays white.
+    assert min(brightness(video, x=580, y=630, width=120, height=24)) > 240
+
+
+def test_a_note_lies_at_the_bottom_of_the_window_without_a_crop(chromium, site_url, tmp_path):
+    video = panel_take(tmp_path, site_url, [], crop=False, note="Valid for seven days")
+    assert min(brightness(video, x=580, y=630, width=120, height=24)) < 120
+    assert min(brightness(video, x=1000, y=486, width=16, height=10)) > 220
+
+
+def test_an_arrow_stays_inside_the_crop(chromium, site_url, tmp_path):
+    video = panel_take(tmp_path, site_url, [{"arrow": EDGE}])
+    assert max(redness(video, x=1100, y=300, width=100, height=40)) > 15, "no arrow from inside the panel"
+    assert max(redness(video, x=800, y=290, width=140, height=60)) < 5, "the arrow comes from outside the picture"
+
+
+def test_a_point_outside_the_picture_is_no_place_for_an_arrow(chromium, site_url, tmp_path):
+    sb = board(tmp_path, f"{site_url}/panel.html", [{"do": [{"click": EDGE}]}], viewport="1280x720")
+    open_page, in_panel = [[700, 400]], [[1100, 400]]  # both on an empty background
+    with open_stage(sb, profiles_dir=tmp_path / "profiles") as stage:
+        cut = [PANEL_CROP.x, PANEL_CROP.y, PANEL_CROP.x + PANEL_CROP.width, PANEL_CROP.y + PANEL_CROP.height]
+        assert stage.page.evaluate(MARK_BUSY, [[open_page, in_panel], cut]) == [1, 0]
+        assert stage.page.evaluate(MARK_BUSY, [[open_page, in_panel], [0, 0, 1280, 720]]) == [0, 0]
+
+
+def test_without_a_crop_the_same_arrow_comes_from_the_open_page(chromium, site_url, tmp_path):
+    video = panel_take(tmp_path, site_url, [{"arrow": EDGE}], crop=False)
+    assert max(redness(video, x=800, y=290, width=140, height=60)) > 15
+
+
+def test_a_probe_reports_the_crop_and_what_it_leaves_out(chromium, site_url, tmp_path):
+    steps = [{"do": [{"click": EDGE}, {"box": OUTSIDE}, {"click": OUTSIDE}, {"hover": OUTSIDE}, {"click": OUTSIDE}]}]
+    sb = board(tmp_path, f"{site_url}/panel.html", steps, viewport="1280x720", crop=PANEL)
+    with open_stage(sb, profiles_dir=tmp_path / "profiles") as stage:
+        result = run_probe(sb, stage)
+    assert result.failed is None
+    assert result.crop == PANEL_CROP
+    assert result.page.notices == (
+        'box role=button name="Outside": the element is not inside the crop',
+        'click role=button name="Outside": the element is not inside the crop',
+        'hover role=button name="Outside": the element is not inside the crop',
+    )
+
+
+def test_a_probe_without_a_crop_leaves_nothing_out(chromium, site_url, tmp_path):
+    sb = board(tmp_path, f"{site_url}/panel.html", [{"do": [{"box": OUTSIDE}, {"click": OUTSIDE}]}], viewport="1280x720")
+    with open_stage(sb, profiles_dir=tmp_path / "profiles") as stage:
+        result = run_probe(sb, stage)
+    assert (result.crop, result.page.notices) == (None, ())
