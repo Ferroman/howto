@@ -13,11 +13,14 @@
   #corner { left: 1140px; top: 660px; }
   #below { left: 40px; top: 1500px; }
   #red { position: absolute; left: 600px; top: 300px; width: 80px; height: 30px; background: #d00; }
+  /* Pinned to the window, as a message or a dialog is. The body is the window here, so a zoom leaves it in place. */
+  #saved { position: fixed; right: 16px; top: 16px; width: 100px; height: 30px; }
 </style></head>
 <body style="color: rgb(34, 34, 34);">
 <div id="app">
 <h1>Zoom</h1>
 <div id="red"></div>
+<div id="saved" role="status">Saved</div>
 <button id="centre" type="button" onclick="document.title = 'Centre was clicked'">Centre</button>
 <button id="corner" type="button" onclick="document.title = 'Corner was clicked'">Corner</button>
 <button id="below" type="button" onclick="document.title = 'Below was clicked'">Below</button>

@@ -270,6 +270,19 @@ def test_an_action_lands_on_its_target_while_the_page_is_zoomed(chromium, site_u
         assert stage.page.title() == "Corner was clicked"
 
 
+def test_an_app_that_fills_the_window_is_zoomed_with_its_pinned_parts(chromium, site_url, tmp_path):
+    sb, (corner,) = zoom_stage(tmp_path, site_url, "zoom.html", "Corner")
+    with open_stage(sb, profiles_dir=tmp_path / "profiles") as stage:
+        status = stage.page.get_by_role("status")
+        before = Box(**status.bounding_box())
+        stage.zoom_to(corner, 2, False)
+        after = Box(**status.bounding_box())
+        notices = stage.report(None, 1000).notices
+    # The message in the top right corner is enlarged with the page: it did not jump, and nothing was refused.
+    assert close_to(after, frame(Box(1140, 660, 120, 40), VIEWPORT, 2).to_screen(before))
+    assert notices == ()
+
+
 STYLES = "() => [document.body.style.cssText, document.documentElement.style.cssText, typeof window.__howtoZoom]"
 
 
