@@ -561,3 +561,37 @@ def test_a_probe_looks_for_the_element_of_each_mark(chromium, site_url, tmp_path
     assert outcome({"arrow": {"role": "button", "name": "Invite", "note": "Sends the email"}}) is None
     assert outcome({"circle": {"role": "button", "name": "Remove"}}).error == 'circle role=button name="Remove": 2 elements match'
     assert outcome({"box": {"role": "button", "name": "Nope"}}).error == 'box role=button name="Nope": 0 elements match'
+
+
+ANN = {"text": "ann@example.com"}
+
+
+def test_a_mark_on_a_line_of_text_keeps_to_the_text(chromium, site_url, tmp_path):
+    # The list item with Ann's address is as wide as the page, and its text is not.
+    sb = board(tmp_path, f"{site_url}/settings.html", [{"do": [{"circle": ANN}]}], viewport="1280x720")
+    video = tmp_path / "take.webm"
+    with open_stage(sb, profiles_dir=tmp_path / "profiles") as stage:
+        row = Box(**stage.page.get_by_text("ann@example.com").bounding_box())
+        assert row.width > 1000
+        stage.start_recording(video)
+        stage.mark(sb.steps[0].do[0], True)
+        time.sleep(0.4)
+        stage.stop_recording()
+    band = dict(y=round(row.y) - 40, height=round(row.height) + 80)
+    assert max(redness(video, x=0, width=320, **band)) > 5, "no circle at the text"
+    assert max(redness(video, x=640, width=600, **band)) < 5, "the circle runs across the page"
+
+
+def test_a_block_with_a_colour_of_its_own_is_marked_as_a_whole(chromium, site_url, tmp_path):
+    # The block of text on marks.html is 260 by 420 pixels at (240, 150), and its one line of text is at the top.
+    video = marks_take(tmp_path, site_url, "marks.html", [{"box": {"text": "Notes about the team."}}])
+    assert max(redness(video, x=228, y=300, width=8, height=200)) > 20, "the box does not follow the block's edge"
+
+
+def test_the_zoom_is_aimed_at_the_text_of_a_mark(chromium, site_url, tmp_path):
+    sb = board(tmp_path, f"{site_url}/settings.html", [{"do": [{"circle": ANN}]}], viewport="1280x720")
+    with open_stage(sb, profiles_dir=tmp_path / "profiles") as stage:
+        before = box_of(stage, "Invite")
+        # A row as wide as the page cannot be enlarged. Its text can.
+        stage.zoom_to(sb.steps[0].do[0], 2, False)
+        assert box_of(stage, "Invite").width == pytest.approx(2 * before.width, abs=1)

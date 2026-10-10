@@ -20,7 +20,7 @@ from . import marks, zoom
 from .errors import RunError
 from .probe import cut_outline
 from .runner import Interrupt, PageReport, StepFailed
-from .storyboard import Action, Locator, Pace, Storyboard
+from .storyboard import MARK_ACTIONS, Action, Locator, Pace, Storyboard
 
 DEFAULT_TIMEOUT = 10.0
 # A probe describes the page a moment after the last action. The browser
@@ -133,6 +133,25 @@ MARK_BUSY = """(candidates) => {
     return Array.from(element.childNodes).some((node) => node.nodeType === 3 && node.textContent.trim());
   };
   return candidates.map((points) => points.filter(([x, y]) => busy(x, y)).length);
+}"""
+# What a mark is drawn around. A locator by text often names a block that is as
+# wide as the page while its words are not, and a circle around that block
+# would run across the picture. So an element that shows no box of its own (no
+# background, border or shadow, and not a control or a picture) is measured by
+# what is in it.
+MARK_BOX = """(element) => {
+  const plain = (box) => ({x: box.x, y: box.y, width: box.width, height: box.height});
+  const whole = element.getBoundingClientRect();
+  const style = getComputedStyle(element);
+  const seen = (colour) => !/^transparent$|, 0\\)$/.test(colour);
+  const framed = seen(style.backgroundColor) || style.backgroundImage !== 'none' || style.boxShadow !== 'none'
+    || ['Top', 'Right', 'Bottom', 'Left'].some((side) =>
+      parseFloat(style[`border${side}Width`]) > 0 && style[`border${side}Style`] !== 'none' && seen(style[`border${side}Color`]));
+  if (framed || element.matches('button,input,select,textarea,img,svg,canvas,video,iframe')) return plain(whole);
+  const range = document.createRange();
+  range.selectNodeContents(element);
+  const inner = range.getBoundingClientRect();
+  return inner.width && inner.height ? plain(inner) : plain(whole);
 }"""
 # The marks are in a closed shadow root that the page cannot reach. A custom
 # property on <html> is inherited there, and the marks take their opacity from it.
@@ -337,12 +356,12 @@ class PlaywrightStage:
 
     def _mark(self, action: Action, draw: bool) -> None:
         target = self._one(action)
-        box = self._box(target)
+        box = self._aim(action, target)
         if box is not None and not zoom.on_screen(box, self.viewport):
             # A scroll moves the page under the marks that are already there.
             self._clear_marks(draw)
             target.scroll_into_view_if_needed(timeout=self.timeout_ms)
-            box = self._box(target)
+            box = self._aim(action, target)
         if not draw or box is None:
             return
         if action.kind == "arrow":
@@ -380,9 +399,16 @@ class PlaywrightStage:
         measured = target.bounding_box(timeout=self.timeout_ms)
         return zoom.Box(**measured) if measured else None
 
+    def _aim(self, action: Action, target) -> zoom.Box | None:
+        """The box that an action is about: the element for a pointer, and what the viewer sees of it for a mark."""
+        box = self._box(target)
+        if box is None or action.kind not in MARK_ACTIONS:
+            return box
+        return zoom.Box(**target.evaluate(MARK_BOX, timeout=self.timeout_ms))
+
     def _zoom_to(self, action: Action, factor: float, animate: bool) -> None:
         target = self._one(action)
-        box = self._box(target)
+        box = self._aim(action, target)
         if self._marks and box is not None and zoom.on_screen(box, self.viewport):
             # The picture holds still while something is drawn on it, as long
             # as the next target is in it.
@@ -397,7 +423,7 @@ class PlaywrightStage:
             # picture shows. So the scroll comes first, at the page's own size.
             self._zoom_out(animate)
             target.scroll_into_view_if_needed(timeout=self.timeout_ms)
-            box = self._box(target)
+            box = self._aim(action, target)
         window = zoom.frame(box, self.viewport, factor) if box is not None else None
         if window is None:
             # Nothing to aim at, or a target too large to enlarge.
