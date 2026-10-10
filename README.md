@@ -16,7 +16,9 @@ The design, and the research behind it, are in the dotfiles repository: `~/p/.do
 bash install.sh
 ```
 
-The installer builds `~/.local/share/howto/venv`, downloads Playwright's Chromium, links `~/.local/bin/howto`, and links the skill into `~/.claude/skills` and `~/.pi/agent/skills`. It is safe to run again.
+The installer builds `~/.local/share/howto/venv`, downloads Playwright's Chromium, links `~/.local/bin/howto`, and links the skill into `~/.claude/skills`. It is safe to run again.
+
+pi loads the skill from the same folder when its settings list it: `"skills": ["~/.claude/skills"]` in `~/.pi/agent/settings.json`. Do not also link the skill into `~/.pi/agent/skills`, because pi would then find it twice.
 
 ## Commands
 

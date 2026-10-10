@@ -13,7 +13,7 @@ SANDBOX="$(mktemp -d)"
 trap 'rm -rf "$SANDBOX"' EXIT
 export HOME="$SANDBOX/home" LOG="$SANDBOX/calls.log"
 mkdir -p "$HOME" "$SANDBOX/bin"
-unset HOWTO_VENV HOWTO_BIN_DIR HOWTO_CLAUDE_SKILLS HOWTO_PI_SKILLS HOWTO_SKIP_BROWSER
+unset HOWTO_VENV HOWTO_BIN_DIR HOWTO_CLAUDE_SKILLS HOWTO_SKIP_BROWSER
 
 cat > "$SANDBOX/bin/uv" <<'EOF'
 #!/usr/bin/env bash
@@ -35,7 +35,7 @@ VENV="$HOME/.local/share/howto/venv"
 run() { out="$(bash "$REPO/install.sh" 2>&1)"; rc=$?; }
 calls() { grep -c -- "$1" "$LOG" 2>/dev/null || true; }
 
-# --- a first install, on a machine without pi -------------------------------
+# --- a first install ----------------------------------------------------------
 run
 assert "first run succeeds" '[ "$rc" = 0 ]'
 assert "the environment is built on a uv-managed Python 3.13" \
@@ -46,16 +46,16 @@ assert "Chromium is downloaded" 'grep -qx "playwright install chromium" "$LOG"'
 assert "the command is linked" '[ "$(readlink "$HOME/.local/bin/howto")" = "$VENV/bin/howto" ]'
 assert "the skill is linked for Claude Code" \
   '[ "$(readlink "$HOME/.claude/skills/howto-video")" = "$REPO/skill" ]'
-assert "without pi, the pi skill is skipped and said so" \
-  '[ ! -e "$HOME/.pi" ] && [[ "$out" == *"skipped the pi skill"* ]]'
 
-# --- a second run, now with pi ---------------------------------------------
+# --- a second run, on a machine with pi --------------------------------------
+# pi loads ~/.claude/skills through its settings, and it skips whatever an
+# ignore file in its own skills folder names. A link there would be a
+# duplicate or invisible, so the installer leaves that folder alone.
 mkdir -p "$HOME/.pi/agent/skills"
 run
 assert "second run succeeds" '[ "$rc" = 0 ]'
 assert "the environment is not rebuilt" '[ "$(calls "^uv venv ")" = 1 ]'
-assert "the skill is linked for pi" \
-  '[ "$(readlink "$HOME/.pi/agent/skills/howto-video")" = "$REPO/skill" ]'
+assert "the skills folder of pi is left alone" '[ -z "$(ls -A "$HOME/.pi/agent/skills")" ]'
 assert "the links are unchanged" \
   '[ "$(readlink "$HOME/.local/bin/howto")" = "$VENV/bin/howto" ] && [ "$(readlink "$HOME/.claude/skills/howto-video")" = "$REPO/skill" ]'
 
