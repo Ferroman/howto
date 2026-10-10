@@ -22,6 +22,10 @@ from .runner import PageReport, StepFailed
 from .storyboard import Action, Locator, Pace, Storyboard
 
 DEFAULT_TIMEOUT = 10.0
+# A probe describes the page a moment after the last action. The browser
+# reports a new tab only some 0.1 to 0.2 s after the click that opened it, and
+# there is no event that says "no tab is coming", so the wait is a fixed one.
+SETTLE_MS = 300
 NOTE_STYLE = (
     "position:fixed;left:50%;bottom:48px;transform:translateX(-50%);max-width:70%;"
     "padding:14px 22px;border-radius:10px;background:rgba(20,20,24,.88);color:#fff;"
@@ -110,6 +114,37 @@ class PlaywrightStage:
         self.timeout_ms = timeout * 1000
         self._label_rule = None
         self._note = None
+        self._dialogs: list[str] = []
+        self._tabs: list[Page] = []
+        page.on("dialog", self._on_dialog)
+        page.context.on("page", self._on_tab)
+
+    def _on_dialog(self, dialog) -> None:
+        """Answers a browser dialog as Playwright would without a listener, and keeps a note of it.
+
+        A dismissed confirm means that the action behind it did not happen,
+        while the click that opened it succeeded. Without the note a probe
+        would report the step as ok and say nothing.
+        """
+        if dialog.type == "beforeunload":
+            dialog.accept()
+            return
+        self._dialogs.append(f'a {dialog.type} dialog was dismissed: "{dialog.message}"')
+        dialog.dismiss()
+
+    def _on_tab(self, tab: Page) -> None:
+        self._tabs.append(tab)
+
+    def _notices(self) -> tuple[str, ...]:
+        notices = list(self._dialogs)
+        for tab in self._tabs:
+            try:
+                tab.wait_for_load_state("domcontentloaded", timeout=self.timeout_ms)
+                address = tab.url
+            except PlaywrightError:
+                address = "(closed)"
+            notices.append(f"a new tab opened and the steps stay in the first one: {address}")
+        return tuple(notices)
 
     def _one(self, action: Action):
         """The single element an action names. None or several is an error: the tool does not guess."""
@@ -175,12 +210,15 @@ class PlaywrightStage:
 
     def report(self, within: Locator | None, max_chars: int) -> PageReport:
         scope = resolve(self.page, within) if within is not None else self.page.locator("body")
+        self.page.wait_for_timeout(SETTLE_MS)
         try:
             outline = scope.first.aria_snapshot(timeout=self.timeout_ms)
         except PlaywrightError as exc:
             outline = f"(no outline: {_first_line(exc)})"
         kept, omitted = cut_outline(outline, max_chars)
-        return PageReport(url=self.page.url, title=self.page.title(), outline=kept, omitted=omitted)
+        return PageReport(
+            url=self.page.url, title=self.page.title(), outline=kept, omitted=omitted, notices=self._notices()
+        )
 
 
 @contextmanager

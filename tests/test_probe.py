@@ -69,3 +69,17 @@ def test_a_long_outline_is_cut_at_a_line_end():
 def test_one_enormous_line_is_still_cut():
     kept, omitted = cut_outline("x" * 5000, 100)
     assert (len(kept), omitted) == (100, 4900)
+
+
+def test_notes_about_what_the_steps_did_not_handle_come_before_the_page():
+    page = PageReport(
+        url="http://demo.test/", title="Demo", outline="- main",
+        notices=('a confirm dialog was dismissed: "Delete this invitation?"',),
+    )
+    assert format_report(RunResult(steps=(StepResult(1, True, "press Enter"),), page=page)) == (
+        "step 1 ok      press Enter\n"
+        'note: a confirm dialog was dismissed: "Delete this invitation?"\n'
+        'page: http://demo.test/  "Demo"\n'
+        "outline:\n"
+        "- main\n"
+    )

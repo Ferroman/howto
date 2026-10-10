@@ -29,6 +29,7 @@ def format_report(result: RunResult) -> str:
     lines.extend(f"warning: {warning}" for warning in result.warnings)
     page = result.page
     if page is not None:
+        lines.extend(f"note: {notice}" for notice in page.notices)
         lines.append(f'page: {page.url}  "{page.title}"')
         lines.append("outline:")
         lines.append(page.outline.rstrip("\n"))

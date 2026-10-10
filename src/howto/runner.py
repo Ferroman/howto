@@ -28,6 +28,9 @@ class PageReport:
     title: str
     outline: str
     omitted: int = 0
+    # What happened in the browser that the steps did not handle: a dialog
+    # that was dismissed, a tab that opened.
+    notices: tuple[str, ...] = ()
 
 
 class Stage(Protocol):

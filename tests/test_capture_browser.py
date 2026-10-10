@@ -171,3 +171,22 @@ def test_a_blocked_element_says_what_blocks_it(chromium, site_url, tmp_path, mon
         result = run_probe(sb, stage)
     assert result.failed.error.startswith(f'click role=button name="{button}": Locator.click: Timeout 1000ms exceeded: ')
     assert result.failed.error.endswith(reason)
+
+
+def test_a_dismissed_dialog_is_noted(chromium, site_url, tmp_path):
+    sb = board(tmp_path, f"{site_url}/popups.html", [{"do": [{"click": {"role": "button", "name": "Delete"}}]}])
+    with open_stage(sb, profiles_dir=tmp_path / "profiles") as stage:
+        result = run_probe(sb, stage)
+    assert result.failed is None
+    assert result.page.notices == ('a confirm dialog was dismissed: "Delete this invitation?"',)
+    # Dismissed means that nothing was deleted.
+    assert 'heading "Popups"' in result.page.outline
+
+
+def test_a_new_tab_is_noted(chromium, site_url, tmp_path):
+    sb = board(tmp_path, f"{site_url}/popups.html", [{"do": [{"click": {"role": "link", "name": "Open the report"}}]}])
+    with open_stage(sb, profiles_dir=tmp_path / "profiles") as stage:
+        result = run_probe(sb, stage)
+    assert result.failed is None
+    assert result.page.notices == (f"a new tab opened and the steps stay in the first one: {site_url}/done.html",)
+    assert result.page.url == f"{site_url}/popups.html"
