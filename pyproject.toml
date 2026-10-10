@@ -1,8 +1,22 @@
 [project]
-name = "howto"
+# The command is `howto`. The package has a longer name because `howto` on
+# PyPI is another project.
+name = "howto-video"
 version = "0.1.0"
-description = "Narrated how-to videos of a web app, from a storyboard"
+description = "Narrated how-to videos and animated pictures of a web app, from a YAML storyboard"
+readme = "README.md"
 requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Bogdan Frankovskyi" }]
+keywords = ["screencast", "tutorial", "documentation", "playwright", "text-to-speech", "gif"]
+classifiers = [
+  "Environment :: Console",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Topic :: Multimedia :: Video :: Capture",
+  "Topic :: Software Development :: Documentation",
+]
 # playwright is pinned exactly: the Screencast API is new (1.59) and still
 # gaining options, and capture.py is written against this release's names.
 dependencies = [
@@ -18,6 +32,10 @@ howto = "howto.cli:main"
 # The speech commands that HOWTO_TTS can name. See src/howto/speech/__init__.py.
 howto-tts-audiocpp = "howto.speech.audiocpp:main"
 howto-tts-kokoro = "howto.speech.kokoro:main"
+
+[project.urls]
+Repository = "https://github.com/Ferroman/howto"
+Issues = "https://github.com/Ferroman/howto/issues"
 
 [build-system]
 requires = ["hatchling"]
