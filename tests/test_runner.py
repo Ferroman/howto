@@ -323,3 +323,157 @@ def test_a_failed_probe_describes_a_page_at_its_own_size(tmp_path):
     result = run_probe(board(tmp_path, [{"do": [click("A"), DONE]}], zoom=2), stage)
     assert stage.calls == [f"{ZOOM_A} at once", CLICK_A, WAIT_DONE, "zoom_out at once", "report"]
     assert result.failed.index == 1
+
+
+CIRCLE_A = 'circle role=button name="A"'
+MARK_A = f"mark {CIRCLE_A}"
+MARK_B = 'mark circle role=button name="B"'
+ZOOM_ON_MARK_A = f"zoom 2 {CIRCLE_A}"
+# What the fake stage spends on drawing a mark, on fading marks out and on a zoom.
+SLOW = {"mark_seconds": 0.6, "clear_seconds": 0.25, "zoom_seconds": 1.1}
+
+
+def circle(name):
+    return {"circle": {"role": "button", "name": name}}
+
+
+def test_a_mark_is_drawn_and_held_and_it_goes_as_the_click_lands(tmp_path):
+    result, stage, clock = take(tmp_path, [{"do": [circle("A"), click("A")]}], stage_options=SLOW)
+    assert stage.calls == ["start_recording", MARK_A, CLICK_A, "clear_marks", "stop_recording"]
+    # The lead, the hold on the finished mark, and the gap.
+    assert clock.sleeps == [0.5, 0.6, 0.4]
+    # lead 0.5 + drawing 0.6 + hold 0.6 + fading 0.25 + gap 0.4
+    assert result.timeline[0].end == pytest.approx(2.35)
+
+
+def test_marks_in_a_row_are_held_once(tmp_path):
+    _, stage, clock = take(tmp_path, [{"do": [circle("A"), circle("B"), click("B")]}])
+    assert stage.calls == ["start_recording", MARK_A, MARK_B, CLICK_B, "clear_marks", "stop_recording"]
+    assert clock.sleeps == [0.5, 0.6, 0.4]
+
+
+def test_a_key_press_takes_the_marks_away(tmp_path):
+    _, stage, _ = take(tmp_path, [{"do": [circle("A"), {"press": "Enter"}, click("B")]}])
+    assert stage.calls == ["start_recording", MARK_A, "press Enter", "clear_marks", CLICK_B, "stop_recording"]
+
+
+@pytest.mark.parametrize(
+    "action, described",
+    [
+        ({"hover": {"role": "button", "name": "A"}}, 'hover role=button name="A"'),
+        ({"fill": {"label": "Email", "value": "sam@example.com"}}, 'fill label="Email" value="sam@example.com"'),
+        ({"select": {"label": "Role", "option": "Admin"}}, 'select label="Role" option="Admin"'),
+        (DONE, WAIT_DONE),
+    ],
+)
+def test_an_action_that_leaves_the_page_as_it_is_keeps_the_marks(tmp_path, action, described):
+    _, stage, _ = take(tmp_path, [{"do": [circle("A"), action, click("B")]}])
+    assert stage.calls == ["start_recording", MARK_A, described, CLICK_B, "clear_marks", "stop_recording"]
+
+
+@pytest.mark.parametrize(
+    "moves, described",
+    [
+        ({"goto": "http://demo.test/next"}, "goto http://demo.test/next"),
+        ({"scroll_to": {"role": "heading", "name": "Done"}}, 'scroll_to role=heading name="Done"'),
+    ],
+)
+def test_the_marks_go_before_the_page_moves(tmp_path, moves, described):
+    _, stage, _ = take(tmp_path, [{"do": [circle("A"), moves, click("B")]}])
+    assert stage.calls == ["start_recording", MARK_A, "clear_marks", described, CLICK_B, "stop_recording"]
+
+
+def test_a_mark_that_ends_a_step_stays_while_the_step_is_spoken(tmp_path):
+    steps = [{"say": "One.", "note": "A note", "do": [circle("A")]}]
+    result, stage, clock = take(tmp_path, steps, {1: [clip(4.0)]}, SLOW)
+    assert stage.calls == ["start_recording", "note A note", MARK_A, "clear_marks", "hide_note", "stop_recording"]
+    # The lead, the hold on the mark, the rest of the four seconds, and what the fading leaves of the gap.
+    assert clock.sleeps == [0.5, 0.6, 2.3, 0.15]
+    # The narration and the gap: the marks fade within the gap.
+    assert result.timeline[0].end == pytest.approx(4.4)
+
+
+def test_a_mark_is_shown_for_its_hold_even_when_nothing_is_said(tmp_path):
+    result, stage, clock = take(tmp_path, [{"do": [circle("A")]}], stage_options=SLOW)
+    assert stage.calls == ["start_recording", MARK_A, "clear_marks", "stop_recording"]
+    assert clock.sleeps == [0.5, 0.6, 0.15]
+
+
+def test_the_picture_moves_in_for_a_mark_and_stays_in_while_it_is_shown(tmp_path):
+    result, stage, clock = take(tmp_path, [{"say": "One.", "do": [circle("A")]}], {1: [clip(4.0)]}, SLOW, zoom=2)
+    # The marks are placed for the enlarged picture, so they go before it widens.
+    assert stage.calls == ["start_recording", ZOOM_ON_MARK_A, MARK_A, "clear_marks", "zoom_out", "stop_recording"]
+    # No hold of 0.9 s before the way out: the mark holds the picture until the narration ends.
+    assert clock.sleeps == [0.5, 0.6, 1.2]
+    # The fading and the way out take longer than the gap, so the step ends when they do.
+    assert result.timeline[0].end == pytest.approx(4.0 + 0.25 + 1.1)
+
+
+def test_a_click_after_a_mark_ends_the_step_as_any_zoomed_click_does(tmp_path):
+    _, stage, clock = take(tmp_path, [{"do": [circle("A"), click("A")]}], zoom=2)
+    assert stage.calls == [
+        "start_recording", ZOOM_ON_MARK_A, MARK_A, ZOOM_A, CLICK_A, "clear_marks", "zoom_out", "stop_recording",
+    ]
+    # The lead, the hold on the mark, the hold before the way out, and the gap.
+    assert clock.sleeps == [0.5, 0.6, 0.9, 0.4]
+
+
+def test_marks_and_the_zoom_both_go_before_the_page_moves(tmp_path):
+    _, stage, _ = take(tmp_path, [{"do": [circle("A"), {"goto": "http://demo.test/next"}]}], zoom=2)
+    assert stage.calls == [
+        "start_recording", ZOOM_ON_MARK_A, MARK_A, "clear_marks", "zoom_out", "goto http://demo.test/next", "stop_recording",
+    ]
+
+
+def test_a_step_that_fails_leaves_no_marks_for_cleanup(tmp_path):
+    options = {"fail_on": {CLICK_B: "0 elements match"}}
+    result, stage, _ = take(tmp_path, [{"do": [circle("A"), click("B")]}], stage_options=options, cleanup=[click("Undo")])
+    assert result.failed.error == f"{CLICK_B}: 0 elements match"
+    assert stage.calls == ["start_recording", MARK_A, CLICK_B, "clear_marks at once", "stop_recording", CLEANUP]
+
+
+def test_a_mark_whose_element_is_missing_fails_the_step(tmp_path):
+    options = {"fail_on": {CIRCLE_A: "0 elements match"}}
+    result, stage, _ = take(tmp_path, [{"do": [circle("A"), click("B")]}], stage_options=options, cleanup=[click("Undo")])
+    assert (result.failed.index, result.failed.error) == (1, f"{CIRCLE_A}: 0 elements match")
+    assert CLICK_B not in stage.calls
+    assert stage.calls[-2:] == ["stop_recording", CLEANUP]
+
+
+def test_an_interrupt_leaves_no_marks_for_cleanup(tmp_path):
+    clock = FakeClock()
+    stage = FakeStage(clock, interrupt_on={CLICK_A})
+    sb = board(tmp_path, [{"do": [circle("A"), click("A")]}], cleanup=[click("Undo")], zoom=2)
+    with pytest.raises(KeyboardInterrupt):
+        run_take(sb, stage, {}, clock, tmp_path / "capture.webm")
+    assert stage.calls == [
+        "start_recording", ZOOM_ON_MARK_A, MARK_A, ZOOM_A, CLICK_A,
+        "clear_marks at once", "zoom_out at once", "stop_recording", CLEANUP,
+    ]
+
+
+def test_an_interrupt_in_the_middle_of_a_mark_still_clears_it(tmp_path):
+    clock = FakeClock()
+    stage = FakeStage(clock, interrupt_on={CIRCLE_A})
+    with pytest.raises(KeyboardInterrupt):
+        run_take(board(tmp_path, [{"do": [circle("A")]}]), stage, {}, clock, tmp_path / "capture.webm")
+    assert stage.calls == ["start_recording", MARK_A, "clear_marks at once", "stop_recording"]
+
+
+def test_a_probe_finds_the_element_of_a_mark_and_draws_nothing(tmp_path):
+    stage = FakeStage()
+    result = run_probe(board(tmp_path, [{"do": [circle("A"), click("A")]}]), stage)
+    assert stage.calls == [f"{MARK_A} unseen", CLICK_A, "report"]
+    assert result.steps[0].summary == f"{CIRCLE_A}; {CLICK_A}"
+
+
+def test_a_probe_aims_the_zoom_at_a_mark_as_the_take_will(tmp_path):
+    stage = FakeStage()
+    run_probe(board(tmp_path, [{"do": [circle("A")]}], zoom=2), stage)
+    assert stage.calls == [f"{ZOOM_ON_MARK_A} at once", f"{MARK_A} unseen", "zoom_out at once", "report"]
+
+
+def test_a_probe_names_a_mark_whose_element_is_missing(tmp_path):
+    stage = FakeStage(fail_on={CIRCLE_A: "2 elements match"})
+    result = run_probe(board(tmp_path, [{"do": [circle("A"), click("A")]}]), stage)
+    assert (result.failed.index, result.failed.error) == (1, f"{CIRCLE_A}: 2 elements match")

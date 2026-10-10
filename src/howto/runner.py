@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Iterator, Mapping, Protocol, Sequence
 
 from .narrate import Clip
-from .storyboard import Action, Locator, Pace, Step, Storyboard
+from .storyboard import MARK_ACTIONS, Action, Locator, Pace, Step, Storyboard
 from .timeline import StepTime, narration_length, place_clips, step_hold
 
 
@@ -41,12 +41,17 @@ POINTER_ACTIONS = ("click", "hover", "fill", "select")
 # The actions that change which part of the page is in view. The picture goes
 # wide before them, because the zoomed part would be somewhere else afterwards.
 MOVING_ACTIONS = ("goto", "scroll_to")
+# The actions that may change the page under a mark. The marks go as such an
+# action lands, so that none is left on a page that no longer has its target.
+CLEARING_ACTIONS = ("click", "press")
 
 
 class Stage(Protocol):
     def perform(self, action: Action, pace: Pace) -> None: ...
     def zoom_to(self, action: Action, factor: float, animate: bool) -> None: ...
     def zoom_out(self, animate: bool) -> None: ...
+    def mark(self, action: Action, draw: bool) -> None: ...
+    def clear_marks(self, animate: bool) -> None: ...
     def start_recording(self, path: Path) -> None: ...
     def stop_recording(self) -> None: ...
     def show_chapter(self, title: str, seconds: float) -> None: ...
@@ -168,37 +173,75 @@ def _factor(step: Step, storyboard: Storyboard) -> float:
     return storyboard.zoom if step.zoom is None else step.zoom
 
 
-def _act(step: Step, stage: Stage, pace: Pace, factor: float, clock: Clock | None = None) -> None:
-    """Performs a step's actions. With a `factor` above 1 the picture zooms in on each target.
+class _Picture:
+    """What the actions of a step have done to the picture: enlarged it, drawn on it, or both.
 
-    The picture goes in before a pointer action, moves on to the next target,
-    and goes wide again a moment after the last action, so that the viewer
-    sees what the action changed. Without a clock nothing is animated and
-    nothing waits: that is a probe, which zooms only so that it meets the page
-    as the take will.
+    Each flag is set before the stage is asked, so that a call which fails or
+    is interrupted halfway is still undone by `restore`.
+    """
+
+    def __init__(self, stage: Stage) -> None:
+        self._stage = stage
+        self.zoomed = False
+        self.marked = False
+
+    def zoom_to(self, action: Action, factor: float, animate: bool) -> None:
+        self.zoomed = True
+        self._stage.zoom_to(action, factor, animate)
+
+    def mark(self, action: Action, draw: bool) -> None:
+        self.marked = self.marked or draw
+        self._stage.mark(action, draw)
+
+    def clear(self, animate: bool) -> None:
+        if self.marked:
+            self._stage.clear_marks(animate)
+            self.marked = False
+
+    def widen(self, animate: bool) -> None:
+        if self.zoomed:
+            self._stage.zoom_out(animate)
+            self.zoomed = False
+
+    def restore(self, animate: bool) -> None:
+        """A clean picture at the page's own size. The marks go first: they are placed for the enlarged picture."""
+        self.clear(animate)
+        self.widen(animate)
+
+
+def _act(step: Step, stage: Stage, picture: _Picture, pace: Pace, factor: float, clock: Clock | None = None) -> None:
+    """Performs a step's actions, and draws its marks.
+
+    With a `factor` above 1 the picture goes in before a pointer action or a
+    mark, and moves on to the next target. A moment after the last action it
+    goes wide again, so that the viewer sees what the action changed.
+
+    A mark stays until an action that may change the page under it. Marks
+    that are still there when the actions end are left, with the enlargement
+    under them, for the caller: they belong to what is being said.
+
+    Without a clock nothing is drawn or animated and nothing waits. That is a
+    probe, which zooms and looks for the element of each mark only so that it
+    meets the page as the take will.
     """
     animate = clock is not None
-    zoomed = False
-    try:
-        for action in step.do:
-            if zoomed and action.kind in MOVING_ACTIONS:
-                stage.zoom_out(animate)
-                zoomed = False
-            elif factor > 1 and action.kind in POINTER_ACTIONS:
-                # Marked first: a zoom that fails halfway is undone below.
-                zoomed = True
-                stage.zoom_to(action, factor, animate)
-            stage.perform(action, pace)
-        if zoomed:
-            if clock is not None:
-                clock.sleep(pace.zoom_hold)
-            stage.zoom_out(animate)
-            zoomed = False
-    finally:
-        if zoomed:
-            # A failed or interrupted step. What follows, the page report and
-            # cleanup, must meet the page at its own size.
-            stage.zoom_out(False)
+    for action, following in zip(step.do, (*step.do[1:], None)):
+        if action.kind in MOVING_ACTIONS:
+            picture.restore(animate)
+        elif factor > 1 and action.kind in POINTER_ACTIONS + MARK_ACTIONS:
+            picture.zoom_to(action, factor, animate)
+        if action.kind in MARK_ACTIONS:
+            picture.mark(action, animate)
+            if clock is not None and (following is None or following.kind not in MARK_ACTIONS):
+                clock.sleep(pace.mark_hold)
+            continue
+        stage.perform(action, pace)
+        if action.kind in CLEARING_ACTIONS:
+            picture.clear(animate)
+    if picture.zoomed and not picture.marked:
+        if clock is not None:
+            clock.sleep(pace.zoom_hold)
+        picture.widen(animate)
 
 
 def run_probe(
@@ -222,11 +265,16 @@ def run_probe(
     warnings: tuple[str, ...] = ()
     try:
         for step in storyboard.steps[:until]:
+            picture = _Picture(stage)
             try:
-                _act(step, stage, storyboard.pace, _factor(step, storyboard))
+                _act(step, stage, picture, storyboard.pace, _factor(step, storyboard))
             except StepFailed as exc:
                 results.append(StepResult(step.index, False, summarize(step), str(exc)))
                 break
+            finally:
+                # Also after a failed or interrupted step: the page report and
+                # cleanup must meet the page at its own size.
+                picture.restore(False)
             results.append(StepResult(step.index, True, summarize(step)))
         page = stage.report(within, max_chars)
     finally:
@@ -234,7 +282,7 @@ def run_probe(
     return RunResult(steps=tuple(results), warnings=warnings, page=page)
 
 
-def _play(step: Step, stage: Stage, clock: Clock, pace: Pace, factor: float) -> None:
+def _play(step: Step, stage: Stage, picture: _Picture, clock: Clock, pace: Pace, factor: float) -> None:
     if step.note:
         stage.show_note(step.note)
     if step.chapter:
@@ -244,7 +292,7 @@ def _play(step: Step, stage: Stage, clock: Clock, pace: Pace, factor: float) -> 
         clock.sleep(pace.chapter_hold - (clock.now() - shown))
     if step.do:
         clock.sleep(pace.lead)
-        _act(step, stage, pace, factor, clock)
+        _act(step, stage, picture, pace, factor, clock)
 
 
 def run_take(
@@ -270,14 +318,28 @@ def run_take(
         for step in storyboard.steps:
             start = clock.now() - zero
             step_clips = tuple(clips.get(step.index, ()))
+            picture = _Picture(stage)
             try:
-                _play(step, stage, clock, pace, _factor(step, storyboard))
+                _play(step, stage, picture, clock, pace, _factor(step, storyboard))
+                narration = narration_length([clip.duration for clip in step_clips], pace.sentence_gap)
+                elapsed = clock.now() - zero - start
+                hold = step_hold(elapsed=elapsed, narration=narration, gap=pace.gap, pause=step.pause)
+                if picture.marked:
+                    # The marks stay while the step is spoken. Taking them away
+                    # is the gap before the next step, or longer than the gap.
+                    clock.sleep(hold - pace.gap)
+                    began = clock.now()
+                    picture.restore(True)
+                    clock.sleep(pace.gap - (clock.now() - began))
+                else:
+                    clock.sleep(hold)
             except StepFailed as exc:
                 results.append(StepResult(step.index, False, summarize(step), str(exc)))
                 break
-            narration = narration_length([clip.duration for clip in step_clips], pace.sentence_gap)
-            elapsed = clock.now() - zero - start
-            clock.sleep(step_hold(elapsed=elapsed, narration=narration, gap=pace.gap, pause=step.pause))
+            finally:
+                # After a failed or interrupted step, what follows, the end of
+                # the recording and cleanup, must meet a clean page at its own size.
+                picture.restore(False)
             if step.note:
                 stage.hide_note()
             times.append(StepTime(step.index, start, clock.now() - zero, place_clips(start, step_clips, pace.sentence_gap)))

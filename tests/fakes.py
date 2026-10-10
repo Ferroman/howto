@@ -34,6 +34,8 @@ class FakeStage:
         action_seconds=0.0,
         chapter_seconds=0.0,
         zoom_seconds=0.0,
+        mark_seconds=0.0,
+        clear_seconds=0.0,
         stop_error=None,
     ):
         self.clock = clock
@@ -42,6 +44,8 @@ class FakeStage:
         self.action_seconds = action_seconds
         self.chapter_seconds = chapter_seconds
         self.zoom_seconds = zoom_seconds
+        self.mark_seconds = mark_seconds
+        self.clear_seconds = clear_seconds
         self.stop_error = stop_error
         self.calls: list[str] = []
         self.report_args = None
@@ -73,6 +77,22 @@ class FakeStage:
         self.calls.append("zoom_out" if animate else "zoom_out at once")
         if animate:
             self._spend(self.zoom_seconds)
+
+    def mark(self, action, draw) -> None:
+        # Like the real stage, a mark finds its element whether or not it is drawn.
+        described = action.describe()
+        self.calls.append(f"mark {described}" + ("" if draw else " unseen"))
+        if described in self.interrupt_on:
+            raise KeyboardInterrupt
+        if described in self.fail_on:
+            raise StepFailed(f"{described}: {self.fail_on[described]}")
+        if draw:
+            self._spend(self.mark_seconds)
+
+    def clear_marks(self, animate) -> None:
+        self.calls.append("clear_marks" if animate else "clear_marks at once")
+        if animate:
+            self._spend(self.clear_seconds)
 
     def start_recording(self, path) -> None:
         self.calls.append("start_recording")
