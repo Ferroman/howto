@@ -158,3 +158,16 @@ def test_an_action_draws_no_locator_label(chromium, site_url, tmp_path):
     # Playwright would write `Click get_by_role("button", name="Settings")` in a
     # dark box in the top right corner. The page is white there.
     assert min(brightness(video, x=1060, y=14, width=200, height=28)) > 240
+
+
+@pytest.mark.parametrize(
+    "button, reason",
+    [("Save", "element is not enabled"), ("Publish", "intercepts pointer events")],
+)
+def test_a_blocked_element_says_what_blocks_it(chromium, site_url, tmp_path, monkeypatch, button, reason):
+    monkeypatch.setenv("HOWTO_ACTION_TIMEOUT", "1")
+    sb = board(tmp_path, f"{site_url}/blocked.html", [{"do": [{"click": {"role": "button", "name": button}}]}])
+    with open_stage(sb, profiles_dir=tmp_path / "profiles") as stage:
+        result = run_probe(sb, stage)
+    assert result.failed.error.startswith(f'click role=button name="{button}": Locator.click: Timeout 1000ms exceeded: ')
+    assert result.failed.error.endswith(reason)

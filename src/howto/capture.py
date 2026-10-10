@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import html
 import os
+import re
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
@@ -82,6 +83,26 @@ def _first_line(exc: Exception) -> str:
     return lines[0] if lines else type(exc).__name__
 
 
+# What Playwright's call log says about an element that it found but could not use.
+BLOCKED = re.compile(r"intercepts pointer events|element is not \w+|outside of the viewport")
+
+
+def failure_reason(message: str) -> str:
+    """One line that says why an action failed.
+
+    A timeout's first line says only that time ran out. The call log below it
+    says why: the element is disabled, or another element covers it. The
+    reader, usually a model, needs that to fix the storyboard, so the last
+    such line is added.
+    """
+    lines = message.strip().splitlines()
+    if not lines:
+        return "unknown error"
+    first = lines[0].strip()
+    why = [line.strip(" -") for line in lines[1:] if BLOCKED.search(line)]
+    return f"{first.rstrip('.')}: {why[-1]}" if why else first
+
+
 class PlaywrightStage:
     def __init__(self, page: Page, viewport: tuple[int, int], timeout: float) -> None:
         self.page = page
@@ -125,7 +146,7 @@ class PlaywrightStage:
                     target.scroll_into_view_if_needed(timeout=self.timeout_ms)
                 # wait_for needs nothing more: `_one` already waited for the element.
         except PlaywrightError as exc:
-            raise StepFailed(f"{action.describe()}: {_first_line(exc)}") from None
+            raise StepFailed(f"{action.describe()}: {failure_reason(str(exc))}") from None
 
     def start_recording(self, path: Path) -> None:
         width, height = self.viewport

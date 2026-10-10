@@ -1,4 +1,4 @@
-from howto.capture import action_timeout, note_html, resolve
+from howto.capture import action_timeout, failure_reason, note_html, resolve
 from howto.storyboard import parse_locator
 
 
@@ -73,3 +73,45 @@ def test_action_timeout(monkeypatch):
     for raw, expected in (("2", 2.0), ("0.5", 0.5), ("abc", 10.0), ("0", 10.0), ("-3", 10.0), ("", 10.0)):
         monkeypatch.setenv("HOWTO_ACTION_TIMEOUT", raw)
         assert action_timeout() == expected
+
+
+COVERED = """Locator.click: Timeout 1500ms exceeded.
+Call log:
+  - waiting for get_by_role("button", name="Publish")
+    - locator resolved to <button type="button">Publish</button>
+  - attempting click action
+    2 × waiting for element to be visible, enabled and stable
+      - element is visible, enabled and stable
+      - scrolling into view if needed
+      - done scrolling
+      - <div id="cover">…</div> intercepts pointer events
+    - retrying click action
+    - waiting 20ms
+"""
+
+DISABLED = """Locator.click: Timeout 1500ms exceeded.
+Call log:
+  - waiting for get_by_role("button", name="Save")
+    - locator resolved to <button disabled type="button">Save</button>
+  - attempting click action
+    2 × waiting for element to be visible, enabled and stable
+      - element is not enabled
+    - retrying click action
+"""
+
+
+def test_a_timeout_says_what_covers_the_element():
+    assert failure_reason(COVERED) == (
+        'Locator.click: Timeout 1500ms exceeded: <div id="cover">…</div> intercepts pointer events'
+    )
+
+
+def test_a_timeout_says_that_the_element_is_disabled():
+    assert failure_reason(DISABLED) == "Locator.click: Timeout 1500ms exceeded: element is not enabled"
+
+
+def test_an_error_with_nothing_to_add_keeps_its_first_line():
+    assert failure_reason('Keyboard.press: Unknown key: "NotAKey"\nCall log:\n  - pressing') == (
+        'Keyboard.press: Unknown key: "NotAKey"'
+    )
+    assert failure_reason("") == "unknown error"

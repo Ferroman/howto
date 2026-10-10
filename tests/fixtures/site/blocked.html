@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Demo - Blocked</title>
+<style>
+  #cover { position: fixed; inset: 0; background: rgba(0, 0, 0, .4); }
+  #banner { position: fixed; left: 0; right: 0; bottom: 0; padding: 20px; background: #fff; }
+</style>
+</head>
+<body>
+<main>
+<h1>Blocked</h1>
+<button type="button" disabled>Save</button>
+<button type="button">Publish</button>
+</main>
+<div id="cover"><div id="banner" role="dialog" aria-label="Cookies">We use cookies
+<button type="button" onclick="document.getElementById('cover').remove()">Accept</button></div></div>
+</body>
+</html>
