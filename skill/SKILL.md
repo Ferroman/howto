@@ -39,6 +39,7 @@ A line that starts with `note:` reports something the steps did not handle:
 
 - `a confirm dialog was dismissed`: the browser asked a question and `howto` answered "Cancel", so the action behind it did not happen. `howto` cannot accept a browser dialog. Tell the user, or find a path through the app that does not ask.
 - `a new tab opened`: the steps stay in the first tab. To continue on the new page, add `goto` with the address that the note prints.
+- `zoom is skipped on ADDRESS`: the storyboard asks for [zoom](#zoom), and this page has parts pinned to the window that a zoom would move. The picture stays wide on that page. The steps are fine: tell the user in your report.
 
 Two options help with a large page:
 
@@ -74,6 +75,7 @@ cleanup:
 | `setup` | Actions before recording starts |
 | `cleanup` | Actions after recording stops |
 | `viewport` | `1920x1080` by default. Both numbers must be even |
+| `zoom` | How much the picture is enlarged around each control as it is used, from 1 to 4. Without it the picture stays wide. See [Zoom](#zoom) |
 
 | Step field | Meaning |
 |---|---|
@@ -82,6 +84,7 @@ cleanup:
 | `chapter` | A title card |
 | `note` | A caption box on screen for the length of the step |
 | `pause` | Extra seconds to hold at the end |
+| `zoom` | The same as the top-level `zoom`, for this step only. `1` keeps the step wide |
 
 | Action | Form |
 |---|---|
@@ -103,6 +106,33 @@ A locator names exactly one element. Use the first form in this list that identi
 6. `css`: `{css: "form > button"}`. The last resort, because it breaks when the page's markup changes.
 
 Three more keys narrow a locator: `exact: true`, `nth: 0` (the first of several) and `within: {role: dialog}`.
+
+## Zoom
+
+At 1920x1080 the controls of many apps are too small to read in a video. `zoom: 2` at the top level enlarges the picture around each control as it is used:
+
+- Before a `click`, `hover`, `fill` or `select`, the picture moves in on the element.
+- Within a step it moves on from one element to the next.
+- A moment after the last action of the step it goes back to the whole page, so the viewer sees what the action changed.
+
+```yaml
+title: Invite a teammate
+url: https://app.example.com
+zoom: 2
+steps:
+  - say: Open Settings, where teammates are managed.
+    do:
+      - click: {role: button, name: Settings}
+  - say: The list shows everyone you have invited.
+    zoom: 1
+    do:
+      - hover: {role: list, name: Invitations}
+```
+
+- `zoom` on a step replaces the top-level value for that step. Use `zoom: 1` for a step whose point is the whole page.
+- The way in and the way out take about three seconds together. A step with a short narration becomes that much longer.
+- A control that is too large to enlarge by the full amount is enlarged by less, so it is never cut off.
+- You cannot see the picture. Leave `zoom` out unless the user asks for it or says that the controls are hard to read, and offer it in your report.
 
 ## Narration
 

@@ -31,6 +31,15 @@ pi loads the skill from the same folder when its settings list it: `"skills": ["
 
 `skill/SKILL.md` is the reference for the storyboard format.
 
+## Zoom
+
+`zoom: 2` in a storyboard enlarges the picture around each control as it is used, and goes back to the whole page at the end of the step. `skill/SKILL.md` says how to write it.
+
+- **The page enlarges itself.** The zoom is a transform on `<body>` that the browser animates and then draws again at the new size, so the text stays sharp. The recorder gives no more pixels than the page has, so cutting a part out of the recording afterwards would only blur it.
+- **The pointer, the highlight and the note keep their size.** Playwright draws them outside `<body>`.
+- **A page with parts pinned to the window is not zoomed.** A transform makes the body the box that `position: fixed` elements are placed in. On a page whose body is the window, which is how most apps are built, nothing moves. On a page that scrolls as a whole, a pinned header or a dialog would jump. The tool measures every element before it enlarges anything, keeps the picture wide when one of them would move, and says so in a `note:` line of the probe.
+- **A probe zooms as well**, at once and with no waiting, so that it meets the page as the take will.
+
 ## Stopping a run
 
 Ctrl+C stops a probe or a render, runs the storyboard's `cleanup`, and exits with 130. The signal is acted on between browser calls, so the stop can take as long as one action's timeout.
@@ -65,6 +74,7 @@ The browser tests need `uv run playwright install chromium` once. Without Chromi
 | `src/howto/timeline.py` | The timing arithmetic |
 | `src/howto/runner.py` | Setup, steps and cleanup, for a probe or a take |
 | `src/howto/capture.py` | The Playwright browser. The only module that imports Playwright |
+| `src/howto/zoom.py` | Which part of the page a zoom shows |
 | `src/howto/probe.py` | The probe report |
 | `src/howto/assemble.py` | The narration track, ffmpeg and the subtitles |
 | `src/howto/cli.py` | The commands |
