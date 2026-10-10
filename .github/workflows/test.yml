@@ -1,0 +1,34 @@
+# Runs the unit tests, the browser tests and the installer test on a clean
+# Ubuntu, for the oldest and the newest Python that the package allows.
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.13"]
+    env:
+      UV_PYTHON: ${{ matrix.python }}
+      # A browser test that is skipped is not a pass.
+      HOWTO_REQUIRE_BROWSER: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.0
+      - name: Install ffmpeg and img2webp
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg webp
+      - name: Install Chromium
+        run: uv run --extra test playwright install --with-deps chromium
+      - name: Tests
+        run: uv run --extra test pytest -ra
+      - name: Installer test
+        run: bash install.test.sh

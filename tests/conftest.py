@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import stat
 import sys
 import textwrap
@@ -199,11 +200,18 @@ def site_requests(site_url):
 
 @pytest.fixture(scope="session")
 def chromium():
-    """Skips a browser test on a machine without Playwright's Chromium."""
+    """Skips a browser test on a machine without Playwright's Chromium.
+
+    A skipped browser test is not a pass. Where the browser tests have to
+    run, HOWTO_REQUIRE_BROWSER=1 turns the skip into a failure.
+    """
     from playwright.sync_api import Error, sync_playwright
 
     try:
         with sync_playwright() as playwright:
             playwright.chromium.launch(headless=True).close()
     except Error as exc:
-        pytest.skip(f"Playwright's Chromium is not installed: {str(exc).splitlines()[0]}")
+        reason = f"Playwright's Chromium is not installed: {str(exc).splitlines()[0]}"
+        if os.environ.get("HOWTO_REQUIRE_BROWSER"):
+            pytest.fail(reason)
+        pytest.skip(reason)
