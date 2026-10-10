@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Demo - Done</title></head>
+<body>
+<main>
+<h1>Invitation sent</h1>
+<p id="who"></p>
+<script>
+  document.getElementById('who').textContent = new URLSearchParams(location.search).get('email') || '';
+</script>
+</main>
+</body>
+</html>

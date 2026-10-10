@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Demo - Settings</title></head>
+<body>
+<main>
+<h1>Settings</h1>
+<form action="done.html" method="get">
+  <label for="email">Email address</label>
+  <input id="email" name="email" type="email" placeholder="name@example.com">
+  <label for="role">Role</label>
+  <select id="role" name="role"><option>Member</option><option>Admin</option></select>
+  <button type="submit">Invite</button>
+</form>
+<section aria-label="Pending invitations">
+  <ul>
+    <li>ann@example.com <button type="button" onclick="this.parentNode.remove()">Remove</button></li>
+    <li>bob@example.com <button type="button" onclick="this.parentNode.remove()">Remove</button></li>
+  </ul>
+</section>
+</main>
+</body>
+</html>

@@ -113,3 +113,35 @@ def fakes(tmp_path, monkeypatch, sandbox, fake_tts):
     monkeypatch.delenv("FAKE_FFMPEG_FAIL", raising=False)
     monkeypatch.delenv("FAKE_FFPROBE_DURATION", raising=False)
     return SimpleNamespace(tts=fake_tts, ffmpeg=str(ffmpeg), ffprobe=str(ffprobe), sandbox=sandbox)
+
+
+SITE = Path(__file__).parent / "fixtures" / "site"
+
+
+@pytest.fixture(scope="session")
+def site_url():
+    """The three static pages of tests/fixtures/site, served on a free local port."""
+    import functools
+    import http.server
+    import threading
+
+    class Quiet(http.server.SimpleHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), functools.partial(Quiet, directory=str(SITE)))
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{server.server_address[1]}"
+    server.shutdown()
+
+
+@pytest.fixture(scope="session")
+def chromium():
+    """Skips a browser test on a machine without Playwright's Chromium."""
+    from playwright.sync_api import Error, sync_playwright
+
+    try:
+        with sync_playwright() as playwright:
+            playwright.chromium.launch(headless=True).close()
+    except Error as exc:
+        pytest.skip(f"Playwright's Chromium is not installed: {str(exc).splitlines()[0]}")
