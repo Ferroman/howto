@@ -72,6 +72,14 @@ def test_the_first_candidate_faces_the_middle_of_the_picture(target, expected):
     assert side(marks.arrows(target, VIEWPORT)[0]) == expected
 
 
+def test_in_a_crop_the_first_candidate_faces_the_middle_of_the_crop():
+    # In the whole picture this button is left of the middle, so room is looked for on its right.
+    # In a picture cut to the left panel it is at the right edge, and the room is on its left.
+    target = Box(300, 340, 80, 40)
+    assert side(marks.arrows(target, VIEWPORT)[0]) == (1, 0)
+    assert side(marks.arrows(target, VIEWPORT, crop=Box(0, 0, 400, 720))[0]) == (-1, 0)
+
+
 def test_an_arrow_stops_short_of_its_target():
     for candidate in marks.arrows(BUTTON, VIEWPORT):
         assert 10 <= away(candidate.tip, BUTTON) <= 25

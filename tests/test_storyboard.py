@@ -146,6 +146,20 @@ def test_zoom_for_the_whole_video_and_for_one_step():
     assert [step.zoom for step in sb.steps] == [None, 1.0, 3.0]
 
 
+def test_the_picture_is_the_whole_window_unless_crop_is_asked_for():
+    assert parse(board(), Path("demo.yaml")).crop is None
+
+
+def test_crop_names_the_part_of_the_page_that_a_picture_is_cut_to():
+    sb = parse(board(crop={"role": "complementary", "name": "Layers", "nth": "0"}), Path("demo.yaml"))
+    assert sb.crop.describe() == 'role=complementary name="Layers" nth=0'
+
+
+def test_a_step_may_still_say_that_it_does_not_zoom_under_a_crop():
+    sb = parse(board(crop={"label": "x"}, zoom="1", steps=[{"say": "Hi.", "zoom": 1}]), Path("demo.yaml"))
+    assert (sb.zoom, sb.steps[0].zoom) == (1.0, 1.0)
+
+
 def test_pace_carries_the_time_a_zoom_is_held():
     assert Pace().zoom_hold == 0.9
     assert parse(board(pace={"zoom_hold": "0.3"}), Path("demo.yaml")).pace.zoom_hold == 0.3
@@ -217,6 +231,10 @@ def test_pace_carries_the_time_a_mark_is_held():
         (one_step({"do": [{"arrow": {"label": "x", "note": " "}}]}), "step 1: `do[1]`: `arrow`: `note`: must be non-empty text"),
         (board(setup=[{"circle": {"label": "x"}}]), "`setup[1]`: `circle` draws on the picture, and `setup` is not recorded"),
         (board(cleanup=[{"arrow": {"label": "x"}}]), "`cleanup[1]`: `arrow` draws on the picture, and `cleanup` is not recorded"),
+        (board(crop="the sidebar"), "`crop`: a locator must be a mapping"),
+        (board(crop={"label": "x", "note": "Here"}), "`crop`: unknown locator key `note`"),
+        (board(crop={"label": "x"}, zoom="2"), "`zoom` and `crop` do not go together"),
+        (board(crop={"label": "x"}, steps=[{"say": "Hi."}, {"say": "Hi.", "zoom": 2}]), "step 2: `zoom` and `crop` do not go together"),
     ],
 )
 def test_invalid_storyboards_name_the_problem(data, fragment):

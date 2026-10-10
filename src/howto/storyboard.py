@@ -24,7 +24,7 @@ STRING_ACTIONS = ("goto", "press")
 MARK_ACTIONS = ("box", "circle", "underline", "spotlight", "arrow")
 # The marks that can show a few words. `text` already names an element, so the key is `note`.
 NOTED_MARKS = ("arrow",)
-TOP_FIELDS = ("title", "url", "steps", "profile", "viewport", "setup", "cleanup", "pace", "zoom")
+TOP_FIELDS = ("title", "url", "steps", "profile", "viewport", "setup", "cleanup", "pace", "zoom", "crop")
 STEP_FIELDS = ("say", "do", "chapter", "note", "pause", "zoom")
 # How far the picture may be enlarged. At 4 a 1920-pixel page shows 480 pixels.
 MAX_ZOOM = 4.0
@@ -139,6 +139,8 @@ class Storyboard:
     pace: Pace = Pace()
     # How much the picture is enlarged around the target of an action. 1 is not at all.
     zoom: float = 1.0
+    # The part of the page that an animated picture is cut to. None is the whole window.
+    crop: Locator | None = None
 
     @property
     def name(self) -> str:
@@ -353,7 +355,7 @@ def parse(data: object, path: Path) -> Storyboard:
         profile = _text(profile, "`profile`")
         if not PROFILE_RE.match(profile):
             raise StoryboardError("`profile`: use letters, digits, `-` and `_` only")
-    return Storyboard(
+    storyboard = Storyboard(
         path=path,
         title=_text(data["title"], "`title`"),
         url=_text(data["url"], "`url`"),
@@ -364,7 +366,17 @@ def parse(data: object, path: Path) -> Storyboard:
         cleanup=_parse_actions(data.get("cleanup"), "", "cleanup"),
         pace=_parse_pace(data.get("pace")),
         zoom=_parse_zoom(data["zoom"], "") if "zoom" in data else 1.0,
+        crop=parse_locator(data["crop"], "`crop`") if data.get("crop") is not None else None,
     )
+    if storyboard.crop is not None:
+        # A crop is one fixed part of the window, and a zoom moves the page under it.
+        zoomed = [""] if storyboard.zoom > 1 else [f"step {step.index}: " for step in storyboard.steps if (step.zoom or 1) > 1]
+        if zoomed:
+            raise StoryboardError(
+                f"{zoomed[0]}`zoom` and `crop` do not go together: "
+                "a picture is cut to one part of the page, or enlarged around each control"
+            )
+    return storyboard
 
 
 def load(path: Path) -> Storyboard:

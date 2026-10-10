@@ -165,15 +165,18 @@ SHAPES: dict[str, Callable[[Box, tuple[int, int]], Drawing]] = {
 }
 
 
-def arrows(target: Box, viewport: tuple[int, int], note: str | None = None) -> tuple[Arrow, ...]:
+def arrows(
+    target: Box, viewport: tuple[int, int], note: str | None = None, crop: Box | None = None
+) -> tuple[Arrow, ...]:
     """Eight ways to draw an arrow at a target, one from each side.
 
     The one whose tail lies towards the middle of the picture comes first,
-    because there is usually room there, and its neighbours follow.
+    because there is usually room there, and its neighbours follow. The
+    picture is the window, or the `crop` that the window is cut to.
     """
-    width, height = viewport
+    picture = crop or Box(0, 0, *viewport)
     cx, cy = target.x + target.width / 2, target.y + target.height / 2
-    middle = math.atan2(height / 2 - cy, width / 2 - cx)
+    middle = math.atan2(picture.y + picture.height / 2 - cy, picture.x + picture.width / 2 - cx)
     angles = sorted(
         (k * math.pi / 4 for k in range(8)),
         key=lambda angle: round(abs(math.remainder(angle - middle, math.tau)), 9),

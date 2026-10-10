@@ -1,18 +1,23 @@
-"""The arithmetic of a zoom: which part of the page fills the screen.
+"""The arithmetic of a zoom and of a crop: which part of the page the viewer sees.
 
 Two sets of pixels appear here. The *page* is the browser's viewport at its
 own size. The *screen* is what the viewer sees, which is a part of the page,
 enlarged. This module knows nothing about a browser, so it is tested without
 one; `capture` measures the boxes and applies the result.
+
+A crop is simpler: one fixed part of the window, at its own size.
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 # Page pixels kept around a target, so that it never touches the edge of the picture.
 MARGIN = 40.0
 # An enlargement smaller than this is movement for nothing, and the picture stays wide.
 MIN_FACTOR = 1.1
+# Pixels kept around the element that a picture is cut to, so that its edge and a mark around it are in the picture.
+CROP_MARGIN = 12
 
 
 @dataclass(frozen=True)
@@ -71,3 +76,31 @@ def frame(box: Box, viewport: tuple[int, int], factor: float) -> Window | None:
     left = min(max(centre_x - width / (2 * fit), 0.0), width - width / fit)
     top = min(max(centre_y - height / (2 * fit), 0.0), height - height / fit)
     return Window(left=left, top=top, factor=fit)
+
+
+def inside(box: Box, outer: Box) -> bool:
+    """Whether the whole box lies inside another."""
+    return (
+        box.x >= outer.x
+        and box.y >= outer.y
+        and box.x + box.width <= outer.x + outer.width
+        and box.y + box.height <= outer.y + outer.height
+    )
+
+
+def crop(box: Box, viewport: tuple[int, int]) -> Box | None:
+    """The part of the window that a picture of this element is cut to, in whole pixels.
+
+    None for an element that has no size or lies outside the window: a margin
+    alone is not a picture.
+    """
+    width, height = viewport
+    if box.width <= 0 or box.height <= 0:
+        return None
+    if box.x >= width or box.y >= height or box.x + box.width <= 0 or box.y + box.height <= 0:
+        return None
+    left = max(0, math.floor(box.x) - CROP_MARGIN)
+    top = max(0, math.floor(box.y) - CROP_MARGIN)
+    right = min(width, math.ceil(box.x + box.width) + CROP_MARGIN)
+    bottom = min(height, math.ceil(box.y + box.height) + CROP_MARGIN)
+    return Box(left, top, right - left, bottom - top)
