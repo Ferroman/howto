@@ -26,13 +26,22 @@ class FakeStage:
     """Records every call. `fail_on` maps an action description to a reason."""
 
     def __init__(
-        self, clock=None, *, fail_on=None, interrupt_on=(), action_seconds=0.0, chapter_seconds=0.0, stop_error=None
+        self,
+        clock=None,
+        *,
+        fail_on=None,
+        interrupt_on=(),
+        action_seconds=0.0,
+        chapter_seconds=0.0,
+        zoom_seconds=0.0,
+        stop_error=None,
     ):
         self.clock = clock
         self.fail_on = dict(fail_on or {})
         self.interrupt_on = set(interrupt_on)
         self.action_seconds = action_seconds
         self.chapter_seconds = chapter_seconds
+        self.zoom_seconds = zoom_seconds
         self.stop_error = stop_error
         self.calls: list[str] = []
         self.report_args = None
@@ -49,6 +58,21 @@ class FakeStage:
             raise KeyboardInterrupt
         if described in self.fail_on:
             raise StepFailed(f"{described}: {self.fail_on[described]}")
+
+    def zoom_to(self, action, factor, animate) -> None:
+        # Like the real stage, a zoom finds its target first, so a missing
+        # element fails here with the words the action itself would use.
+        described = action.describe()
+        self.calls.append(f"zoom {factor:g} {described}" + ("" if animate else " at once"))
+        if described in self.fail_on:
+            raise StepFailed(f"{described}: {self.fail_on[described]}")
+        if animate:
+            self._spend(self.zoom_seconds)
+
+    def zoom_out(self, animate) -> None:
+        self.calls.append("zoom_out" if animate else "zoom_out at once")
+        if animate:
+            self._spend(self.zoom_seconds)
 
     def start_recording(self, path) -> None:
         self.calls.append("start_recording")

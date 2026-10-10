@@ -218,3 +218,108 @@ def test_a_sleep_without_a_request_lasts_its_time():
     started = time.monotonic()
     RealClock(Interrupt()).sleep(0.25)
     assert 0.25 <= time.monotonic() - started < 0.6
+
+
+ZOOM_A = f"zoom 2 {CLICK_A}"
+ZOOM_B = f"zoom 2 {CLICK_B}"
+DONE = {"wait_for": {"role": "heading", "name": "Done"}}
+WAIT_DONE = 'wait_for role=heading name="Done"'
+
+
+def test_a_take_zooms_in_before_the_action_and_out_after_it(tmp_path):
+    result, stage, clock = take(tmp_path, [{"do": [click("A")]}], stage_options={"zoom_seconds": 1.1}, zoom=2)
+    assert stage.calls == ["start_recording", ZOOM_A, CLICK_A, "zoom_out", "stop_recording"]
+    # The lead, the hold between the action and the way out, and the gap.
+    assert clock.sleeps == [0.5, 0.9, 0.4]
+    # lead 0.5 + zoom in 1.1 + hold 0.9 + zoom out 1.1 + gap 0.4
+    assert result.timeline[0].end == pytest.approx(4.0)
+
+
+def test_each_pointer_action_is_aimed_at_and_the_step_ends_wide(tmp_path):
+    fill = {"fill": {"label": "Email", "value": "sam@example.com"}}
+    described = 'fill label="Email" value="sam@example.com"'
+    _, stage, _ = take(tmp_path, [{"do": [click("A"), fill, {"press": "Enter"}, DONE]}], zoom=2)
+    assert stage.calls == [
+        "start_recording",
+        ZOOM_A, CLICK_A,
+        f"zoom 2 {described}", described,
+        "press Enter",
+        WAIT_DONE,
+        "zoom_out",
+        "stop_recording",
+    ]
+
+
+def test_a_step_without_a_pointer_action_stays_wide(tmp_path):
+    _, stage, clock = take(tmp_path, [{"do": [{"press": "Enter"}, DONE]}], zoom=2)
+    assert stage.calls == ["start_recording", "press Enter", WAIT_DONE, "stop_recording"]
+    assert clock.sleeps == [0.5, 0.4]
+
+
+@pytest.mark.parametrize(
+    "moves, described",
+    [
+        ({"goto": "http://demo.test/next"}, "goto http://demo.test/next"),
+        ({"scroll_to": {"role": "heading", "name": "Done"}}, 'scroll_to role=heading name="Done"'),
+    ],
+)
+def test_the_picture_goes_wide_before_the_page_moves(tmp_path, moves, described):
+    _, stage, _ = take(tmp_path, [{"do": [click("A"), moves, click("B")]}], zoom=2)
+    assert stage.calls == [
+        "start_recording", ZOOM_A, CLICK_A, "zoom_out", described, ZOOM_B, CLICK_B, "zoom_out", "stop_recording",
+    ]
+
+
+def test_a_step_sets_its_own_zoom(tmp_path):
+    steps = [{"do": [click("A")], "zoom": 1}, {"do": [click("B")]}, {"do": [click("C")], "zoom": 3}]
+    _, stage, _ = take(tmp_path, steps, zoom=2)
+    assert stage.calls == [
+        "start_recording", CLICK_A, ZOOM_B, CLICK_B, "zoom_out", f"zoom 3 {CLICK_C}", CLICK_C, "zoom_out", "stop_recording",
+    ]
+
+
+def test_one_step_can_zoom_in_a_video_that_stays_wide(tmp_path):
+    _, stage, _ = take(tmp_path, [{"do": [click("A")]}, {"do": [click("B")], "zoom": 2}])
+    assert stage.calls == ["start_recording", CLICK_A, ZOOM_B, CLICK_B, "zoom_out", "stop_recording"]
+
+
+def test_setup_and_cleanup_never_zoom(tmp_path):
+    _, stage, _ = take(tmp_path, [{"say": "Only words."}], setup=[click("A")], cleanup=[click("Undo")], zoom=2)
+    assert stage.calls == [CLICK_A, "start_recording", "stop_recording", CLEANUP]
+
+
+def test_a_target_that_is_missing_fails_the_step_and_leaves_the_page_wide(tmp_path):
+    options = {"fail_on": {CLICK_B: "0 elements match"}}
+    result, stage, _ = take(tmp_path, [{"do": [click("A"), click("B")]}], stage_options=options, cleanup=[click("Undo")], zoom=2)
+    assert result.failed.error == f"{CLICK_B}: 0 elements match"
+    assert stage.calls == ["start_recording", ZOOM_A, CLICK_A, ZOOM_B, "zoom_out at once", "stop_recording", CLEANUP]
+
+
+def test_an_action_that_fails_while_zoomed_leaves_the_page_wide_for_cleanup(tmp_path):
+    options = {"fail_on": {WAIT_DONE: "0 elements match"}}
+    result, stage, _ = take(tmp_path, [{"do": [click("A"), DONE]}], stage_options=options, cleanup=[click("Undo")], zoom=2)
+    assert result.failed.index == 1
+    assert stage.calls == ["start_recording", ZOOM_A, CLICK_A, WAIT_DONE, "zoom_out at once", "stop_recording", CLEANUP]
+
+
+def test_an_interrupt_while_zoomed_leaves_the_page_wide_for_cleanup(tmp_path):
+    clock = FakeClock()
+    stage = FakeStage(clock, interrupt_on={CLICK_A})
+    sb = board(tmp_path, [{"do": [click("A")]}], cleanup=[click("Undo")], zoom=2)
+    with pytest.raises(KeyboardInterrupt):
+        run_take(sb, stage, {}, clock, tmp_path / "capture.webm")
+    assert stage.calls == ["start_recording", ZOOM_A, CLICK_A, "zoom_out at once", "stop_recording", CLEANUP]
+
+
+def test_a_probe_zooms_at_once(tmp_path):
+    stage = FakeStage()
+    result = run_probe(board(tmp_path, [{"do": [click("A")]}], cleanup=[click("Undo")], zoom=2), stage)
+    assert stage.calls == [f"{ZOOM_A} at once", CLICK_A, "zoom_out at once", "report", CLEANUP]
+    assert result.failed is None
+
+
+def test_a_failed_probe_describes_a_page_at_its_own_size(tmp_path):
+    stage = FakeStage(fail_on={WAIT_DONE: "0 elements match"})
+    result = run_probe(board(tmp_path, [{"do": [click("A"), DONE]}], zoom=2), stage)
+    assert stage.calls == [f"{ZOOM_A} at once", CLICK_A, WAIT_DONE, "zoom_out at once", "report"]
+    assert result.failed.index == 1

@@ -36,8 +36,17 @@ class PageReport:
     notices: tuple[str, ...] = ()
 
 
+# The actions that put the pointer on an element. A zoom aims at that element.
+POINTER_ACTIONS = ("click", "hover", "fill", "select")
+# The actions that change which part of the page is in view. The picture goes
+# wide before them, because the zoomed part would be somewhere else afterwards.
+MOVING_ACTIONS = ("goto", "scroll_to")
+
+
 class Stage(Protocol):
     def perform(self, action: Action, pace: Pace) -> None: ...
+    def zoom_to(self, action: Action, factor: float, animate: bool) -> None: ...
+    def zoom_out(self, animate: bool) -> None: ...
     def start_recording(self, path: Path) -> None: ...
     def stop_recording(self) -> None: ...
     def show_chapter(self, title: str, seconds: float) -> None: ...
@@ -155,6 +164,43 @@ def _cleanup(storyboard: Storyboard, stage: Stage) -> tuple[str, ...]:
     return tuple(warnings)
 
 
+def _factor(step: Step, storyboard: Storyboard) -> float:
+    return storyboard.zoom if step.zoom is None else step.zoom
+
+
+def _act(step: Step, stage: Stage, pace: Pace, factor: float, clock: Clock | None = None) -> None:
+    """Performs a step's actions. With a `factor` above 1 the picture zooms in on each target.
+
+    The picture goes in before a pointer action, moves on to the next target,
+    and goes wide again a moment after the last action, so that the viewer
+    sees what the action changed. Without a clock nothing is animated and
+    nothing waits: that is a probe, which zooms only so that it meets the page
+    as the take will.
+    """
+    animate = clock is not None
+    zoomed = False
+    try:
+        for action in step.do:
+            if zoomed and action.kind in MOVING_ACTIONS:
+                stage.zoom_out(animate)
+                zoomed = False
+            elif factor > 1 and action.kind in POINTER_ACTIONS:
+                # Marked first: a zoom that fails halfway is undone below.
+                zoomed = True
+                stage.zoom_to(action, factor, animate)
+            stage.perform(action, pace)
+        if zoomed:
+            if clock is not None:
+                clock.sleep(pace.zoom_hold)
+            stage.zoom_out(animate)
+            zoomed = False
+    finally:
+        if zoomed:
+            # A failed or interrupted step. What follows, the page report and
+            # cleanup, must meet the page at its own size.
+            stage.zoom_out(False)
+
+
 def run_probe(
     storyboard: Storyboard,
     stage: Stage,
@@ -177,8 +223,7 @@ def run_probe(
     try:
         for step in storyboard.steps[:until]:
             try:
-                for action in step.do:
-                    stage.perform(action, storyboard.pace)
+                _act(step, stage, storyboard.pace, _factor(step, storyboard))
             except StepFailed as exc:
                 results.append(StepResult(step.index, False, summarize(step), str(exc)))
                 break
@@ -189,7 +234,7 @@ def run_probe(
     return RunResult(steps=tuple(results), warnings=warnings, page=page)
 
 
-def _play(step: Step, stage: Stage, clock: Clock, pace: Pace) -> None:
+def _play(step: Step, stage: Stage, clock: Clock, pace: Pace, factor: float) -> None:
     if step.note:
         stage.show_note(step.note)
     if step.chapter:
@@ -199,8 +244,7 @@ def _play(step: Step, stage: Stage, clock: Clock, pace: Pace) -> None:
         clock.sleep(pace.chapter_hold - (clock.now() - shown))
     if step.do:
         clock.sleep(pace.lead)
-        for action in step.do:
-            stage.perform(action, pace)
+        _act(step, stage, pace, factor, clock)
 
 
 def run_take(
@@ -227,7 +271,7 @@ def run_take(
             start = clock.now() - zero
             step_clips = tuple(clips.get(step.index, ()))
             try:
-                _play(step, stage, clock, pace)
+                _play(step, stage, clock, pace, _factor(step, storyboard))
             except StepFailed as exc:
                 results.append(StepResult(step.index, False, summarize(step), str(exc)))
                 break
