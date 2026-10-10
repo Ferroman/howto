@@ -17,11 +17,14 @@
      for an arrow is on its left, which is outside the panel. */
   #edge { left: 10px; top: 200px; }
   #outside { left: 100px; top: 100px; }
+  /* 20 pixels from the bottom edge of the window: nothing fits under it. */
+  #low { left: 100px; top: 660px; }
 </style></head>
 <body>
 <div id="app">
 <aside id="panel" aria-label="Style"><button id="apply" type="button">Apply</button><button id="edge" type="button">Edge</button></aside>
 <button id="outside" type="button">Outside</button>
+<button id="low" type="button">Low</button>
 </div>
 </body>
 </html>

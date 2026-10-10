@@ -62,11 +62,14 @@ Two details depend on the pinned Playwright release. Its stylesheet sets every `
 
 - **The take is silent.** No `tts` is needed and no title card is shown. A step lasts as long as its actions and its `pause`, and a note and the marks explain what happens.
 - **`crop` cuts the picture to one element.** A window of 1920 pixels scaled down to the width of a document has text of five pixels. A part of the window at its own size stays readable, which matters more than the file format. `howto render` ignores `crop`.
-- **The cut is known during the take, not made afterwards.** The recorder films the whole window and ffmpeg cuts the part out. The browser is told the part first, so that a note lies at its bottom and an arrow does not leave it. A cut made later loses the note, which lies at the bottom of the window.
-- **The crop is one fixed part of the window**, measured once after `setup`, with 12 pixels around the element. A zoom moves the page under it, so a storyboard with both is refused.
+- **The cut is known during the take, not made afterwards.** The recorder films the whole window and ffmpeg cuts the part out. The browser is told the part first, so that an arrow does not leave it and the notes go where the picture has them. A cut made later loses the note, which lies at the bottom of the window.
+- **The notes get a strip of their own.** A note laid on a small crop covers what it explains. So the notes are written in a dark strip under the crop, as tall as the longest of them needs, and the picture is the crop and the strip together. At the bottom of the window the strip goes above the crop. A crop as tall as the window leaves no room, and there the strip is the lowest part of the crop, shown only while a note is.
+- **An arrow is shorter in a small picture**: four tenths of the picture's shorter side, and 150 pixels at most.
+- **The crop is one fixed part of the window**, measured once after `setup`, with 12 pixels around the element. Its corner and its size are even numbers, because ffmpeg cuts a recording at even pixels only. A zoom moves the page under it, so a storyboard with both is refused.
 - **A probe reports the crop**, and names each action or mark whose element is outside it. The author is often a model that cannot look at the picture.
 - **Only the frames that differ are kept.** ffmpeg samples 12.5 frames a second and writes a frame when the picture changed, named by its number. The distance to the next number is the time the frame is shown, and both encoders are given that time. A GIF encoder that drops repeated frames itself loses the pause at the end of the loop, because its last frame has no successor to take a time from.
-- **The GIF has one palette and no dither.** Dither noise differs from frame to frame, and it was the larger part of the file. The WebP is lossy and three to four times smaller.
+- **The GIF has one palette and no dither.** Dither noise differs from frame to frame, so no frame repeats: a GIF of 2.6 MB was 1.9 MB without it, and 1.3 MB with the repeated frames dropped as well. The WebP is lossy and about three times smaller.
+- **The first 0.2 seconds of the recording are left out.** The recorder takes its first frame before its overlays are drawn, so the strip is missing from it, and the picture would flash at every loop.
 
 The pause was measured on a take of 9 seconds: with ffmpeg dropping the repeated frames, the GIF played for 6.9 seconds.
 

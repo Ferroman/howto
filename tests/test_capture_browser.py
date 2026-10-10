@@ -586,15 +586,19 @@ def crop_action(sb):
     return Action(kind="crop", locator=sb.crop)
 
 
-def panel_take(tmp_path, site_url, do, *, crop=True, note=None):
-    """A take of panel.html with a note and marks, cut to the panel or not. Returns the video."""
-    extra = {"crop": PANEL} if crop else {}
+def panel_take(tmp_path, site_url, do, *, crop=PANEL, note=None):
+    """A take of panel.html with a note and marks, cut to the panel or not. Returns the video.
+
+    The note is shown a moment after the take begins, so the first frames are without it.
+    """
+    extra = {"crop": crop} if crop else {}
     sb = board(tmp_path, f"{site_url}/panel.html", [{"do": do}], viewport="1280x720", **extra)
     video = tmp_path / "take.webm"
     with open_stage(sb, profiles_dir=tmp_path / "profiles") as stage:
         if crop:
-            stage.crop_to(crop_action(sb))
+            stage.crop_to(crop_action(sb), (note,) if note else ())
         stage.start_recording(video)
+        time.sleep(0.4)
         if note:
             stage.show_note(note)
         for action in sb.steps[0].do:
@@ -607,14 +611,34 @@ def panel_take(tmp_path, site_url, do, *, crop=True, note=None):
 def test_a_crop_is_its_element_with_a_margin(chromium, site_url, tmp_path):
     sb = board(tmp_path, f"{site_url}/panel.html", [{"do": [{"click": EDGE}]}], viewport="1280x720", crop=PANEL)
     with open_stage(sb, profiles_dir=tmp_path / "profiles") as stage:
-        assert stage.crop_to(crop_action(sb)) == PANEL_CROP
+        assert stage.crop_to(crop_action(sb), ()) == PANEL_CROP
+
+
+def test_a_crop_with_notes_grows_by_a_strip_under_it(chromium, site_url, tmp_path):
+    sb = board(tmp_path, f"{site_url}/panel.html", [{"do": [{"click": EDGE}]}], viewport="1280x720", crop=PANEL)
+    with open_stage(sb, profiles_dir=tmp_path / "profiles") as stage:
+        cut = stage.crop_to(crop_action(sb), ("Valid for seven days",))
+        # One line of 18 pixels with its padding. The crop itself is as before.
+        assert (cut.x, cut.y, cut.width) == (PANEL_CROP.x, PANEL_CROP.y, PANEL_CROP.width)
+        assert 40 <= cut.height - PANEL_CROP.height <= 50
+        long = stage.crop_to(crop_action(sb), ("Short", "A note of many words that cannot fit on one line of a narrow panel " * 2))
+        assert long.height - PANEL_CROP.height > 90, "the strip is not as tall as its longest note"
+
+
+def test_the_strip_goes_above_a_crop_at_the_bottom_of_the_window(chromium, site_url, tmp_path):
+    low = {"role": "button", "name": "Low"}  # 100 by 40 pixels at (100, 660)
+    sb = board(tmp_path, f"{site_url}/panel.html", [{"do": [{"click": low}]}], viewport="1280x720", crop=low)
+    with open_stage(sb, profiles_dir=tmp_path / "profiles") as stage:
+        cut = stage.crop_to(crop_action(sb), ("Hi",))
+        assert (cut.x, cut.width, cut.y + cut.height) == (88, 124, 712)
+        assert 40 <= 648 - cut.y <= 50
 
 
 def test_a_crop_that_is_out_of_sight_is_scrolled_to(chromium, site_url, tmp_path):
     far = {"role": "button", "name": "Far"}  # 1500 pixels down the page
     sb = board(tmp_path, f"{site_url}/marks.html", [{"do": [{"click": far}]}], viewport="1280x720", crop=far)
     with open_stage(sb, profiles_dir=tmp_path / "profiles") as stage:
-        cut = stage.crop_to(crop_action(sb))
+        cut = stage.crop_to(crop_action(sb), ())
         assert inside(cut, Box(0, 0, 1280, 720))
         assert inside(Box(**stage.page.get_by_role("button", name="Far").bounding_box()), cut)
 
@@ -623,7 +647,7 @@ def test_a_crop_that_is_out_of_sight_is_scrolled_to(chromium, site_url, tmp_path
     "crop, reason",
     [
         ({"role": "button", "name": "Nope"}, "0 elements match"),
-        ({"role": "button"}, "3 elements match"),
+        ({"role": "button"}, "4 elements match"),
     ],
 )
 def test_a_crop_names_one_element(chromium, site_url, tmp_path, monkeypatch, crop, reason):
@@ -631,24 +655,40 @@ def test_a_crop_names_one_element(chromium, site_url, tmp_path, monkeypatch, cro
     sb = board(tmp_path, f"{site_url}/panel.html", [{"do": [{"click": EDGE}]}], crop=crop)
     with open_stage(sb, profiles_dir=tmp_path / "profiles") as stage:
         with pytest.raises(StepFailed) as caught:
-            stage.crop_to(crop_action(sb))
+            stage.crop_to(crop_action(sb), ("A note",))
     assert str(caught.value) == f"{crop_action(sb).describe()}: {reason}"
 
 
-def test_a_note_lies_at_the_bottom_of_the_crop(chromium, site_url, tmp_path):
+def test_a_note_is_written_in_the_strip_and_leaves_the_crop_clear(chromium, site_url, tmp_path):
     video = panel_take(tmp_path, site_url, [], note="Valid for seven days")
-    # One line of words, centred on the panel, with its lower edge at the panel's.
-    # Left of the middle by 100 pixels is still the note, as long as it was not
-    # folded to fit between its middle and the edge of the window, 170 pixels away.
-    assert min(brightness(video, x=1000, y=486, width=16, height=10)) < 120, "no note in the crop, or a folded one"
+    # The strip is the 46 pixels under the crop, which ends at y = 512. It is
+    # dark before any note is shown, so that the page under it never shows.
+    # Only the recorder's first frames, 0.2 s that a picture leaves out, come
+    # before the strip is drawn.
+    edge = brightness(video, x=952, y=520, width=16, height=30)
+    assert max(edge[5:]) < 60, "the strip is not there for the whole take"
+    words = brightness(video, x=1040, y=522, width=140, height=26)
+    assert words[5] < 60 and max(words) > words[5] + 10, "no words in the strip"
+    # The panel itself, down to its lower edge, is never covered.
+    assert min(brightness(video, x=1000, y=440, width=200, height=56)) > 225
     # Where a note lies in a picture of the whole window, the page stays white.
     assert min(brightness(video, x=580, y=630, width=120, height=24)) > 240
 
 
+def test_a_crop_as_tall_as_the_window_has_its_note_on_its_lowest_part(chromium, site_url, tmp_path):
+    video = panel_take(tmp_path, site_url, [], crop={"css": "#app"}, note="Valid for seven days")
+    # No room under the window or above it. The strip is there only while the note is.
+    lowest = brightness(video, x=20, y=685, width=40, height=25)
+    assert lowest[0] > 240, "the strip covers the page before any note is shown"
+    assert min(lowest) < 60, "no strip at the bottom of the crop"
+
+
 def test_a_note_lies_at_the_bottom_of_the_window_without_a_crop(chromium, site_url, tmp_path):
-    video = panel_take(tmp_path, site_url, [], crop=False, note="Valid for seven days")
+    video = panel_take(tmp_path, site_url, [], crop=None, note="Valid for seven days")
     assert min(brightness(video, x=580, y=630, width=120, height=24)) < 120
-    assert min(brightness(video, x=1000, y=486, width=16, height=10)) > 220
+    # No strip under the panel, and none at the left of the window's lower edge.
+    assert min(brightness(video, x=952, y=520, width=16, height=30)) > 240
+    assert min(brightness(video, x=20, y=685, width=40, height=25)) > 240
 
 
 def test_an_arrow_stays_inside_the_crop(chromium, site_url, tmp_path):
@@ -667,7 +707,7 @@ def test_a_point_outside_the_picture_is_no_place_for_an_arrow(chromium, site_url
 
 
 def test_without_a_crop_the_same_arrow_comes_from_the_open_page(chromium, site_url, tmp_path):
-    video = panel_take(tmp_path, site_url, [{"arrow": EDGE}], crop=False)
+    video = panel_take(tmp_path, site_url, [{"arrow": EDGE}], crop=None)
     assert max(redness(video, x=800, y=290, width=140, height=60)) > 15
 
 
@@ -683,6 +723,17 @@ def test_a_probe_reports_the_crop_and_what_it_leaves_out(chromium, site_url, tmp
         'click role=button name="Outside": the element is not inside the crop',
         'hover role=button name="Outside": the element is not inside the crop',
     )
+
+
+def test_a_probe_reports_the_picture_with_the_strip_for_its_notes(chromium, site_url, tmp_path):
+    steps = [{"note": "Press Edge", "do": [{"click": EDGE}]}]
+    sb = board(tmp_path, f"{site_url}/panel.html", steps, viewport="1280x720", crop=PANEL)
+    with open_stage(sb, profiles_dir=tmp_path / "profiles") as stage:
+        result = run_probe(sb, stage)
+    assert (result.crop.x, result.crop.y, result.crop.width) == (948, 88, 324)
+    assert result.crop.height > PANEL_CROP.height + 40
+    # The strip is part of the picture, and no place for an action: the click is still inside the crop.
+    assert result.page.notices == ()
 
 
 def test_a_probe_without_a_crop_leaves_nothing_out(chromium, site_url, tmp_path):

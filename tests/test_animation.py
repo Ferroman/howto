@@ -2,9 +2,10 @@ import subprocess
 
 import pytest
 
-from pictures import dimensions, gif_frames, webp
+from pictures import dimensions, gif_frames, region, webp
 from howto.animation import (
     FPS,
+    HEAD,
     animate,
     filters,
     frame_count,
@@ -69,11 +70,11 @@ def test_the_listing_gives_each_frame_its_time(tmp_path):
 
 
 def test_the_frames_command_writes_only_the_frames_that_differ(tmp_path):
-    command = frames_command("ffmpeg", tmp_path / "capture.webm", 9.04, "fps=12.5,mpdecimate")
+    command = frames_command("ffmpeg", tmp_path / "capture.webm", 0.2, 8.84, "fps=12.5,mpdecimate")
     joined = " ".join(command)
     assert command[0] == "ffmpeg" and command[-1] == "%06d.png"
-    assert command[command.index("-t") + 1] == "9.040"
-    assert command.index("-t") < command.index("-i"), "the length must limit the recording, not the output"
+    assert (command[command.index("-ss") + 1], command[command.index("-t") + 1]) == ("0.200", "8.840")
+    assert command.index("-ss") < command.index("-t") < command.index("-i"), "both must limit the recording, not the output"
     assert command[command.index("-vf") + 1] == "fps=12.5,mpdecimate"
     # Without these two every frame is written, or the files are numbered 1, 2, 3.
     assert "-fps_mode vfr" in joined and "-frame_pts 1" in joined
@@ -113,12 +114,16 @@ def tools(monkeypatch):
 
 
 def recording(ffmpeg, path, *, size="320x240"):
-    """Three seconds of video: a red square crosses a white picture in the first second, then nothing moves."""
+    """Three seconds of video: a red square crosses a white picture in the first second, then nothing moves.
+
+    For the first 0.1 s the top left corner is blue, as a recorder's first frames differ from the rest.
+    """
     subprocess.run(
         [ffmpeg, "-y", "-loglevel", "error",
          "-f", "lavfi", "-i", f"color=c=white:s={size}:r=25:d=3",
          "-f", "lavfi", "-i", "color=c=red:s=40x40:r=25:d=3",
-         "-filter_complex", "[0][1]overlay=x='if(lt(t,1),t*200,200)':y=100",
+         "-f", "lavfi", "-i", "color=c=blue:s=40x40:r=25:d=3",
+         "-filter_complex", "[0][1]overlay=x='if(lt(t,1),t*200,200)':y=100[moved];[moved][2]overlay=x=0:y=0:enable='lt(t,0.1)'",
          "-c:v", "libvpx", "-b:v", "1M", str(path)],
         check=True,
     )
@@ -143,8 +148,21 @@ def test_both_pictures_are_written_and_nothing_else(tools, tmp_path):
     assert picture.files == {"gif": out / "demo.gif", "webp": out / "demo.webp"}
     assert sorted(p.name for p in out.iterdir()) == ["demo.gif", "demo.webp"]
     assert (picture.width, picture.height) == (160, 120)
-    # Three seconds are 37.5 frames, and the picture has 38.
-    assert picture.seconds == pytest.approx(3.04)
+    # Three seconds less the head of 0.2 s are 35 frames of 0.08 s.
+    assert picture.seconds == pytest.approx(2.8)
+
+
+def test_the_head_of_the_recording_is_left_out(tools, tmp_path):
+    # The recorder's first frames are taken before its overlays are drawn.
+    assert HEAD == 0.2
+    picture = make(tools, tmp_path)
+    corner = region(picture.files["gif"], x=0, y=0, width=20, height=20)
+    assert min(red for red, _, _ in corner) > 200, "the blue corner of the first frames is in the picture"
+
+
+def test_a_take_shorter_than_the_head_is_kept_whole(tools, tmp_path):
+    picture = make(tools, tmp_path, length=0.3)
+    assert picture.seconds == pytest.approx(0.32)
 
 
 def test_the_gif_lasts_as_long_as_the_take_with_its_still_end(tools, tmp_path):
@@ -154,7 +172,7 @@ def test_the_gif_lasts_as_long_as_the_take_with_its_still_end(tools, tmp_path):
     # Nothing moves after the first second, so few frames are kept, and the last one is held to the end.
     assert len(frames) < 3 * FPS / 2
     start, length = frames[-1]
-    assert start + length == pytest.approx(3.04)
+    assert start + length == pytest.approx(2.8)
     assert length > 1.5
 
 
@@ -162,7 +180,7 @@ def test_the_webp_lasts_as_long_and_loops_for_ever(tools, tmp_path):
     picture = make(tools, tmp_path)
     canvas, times, loops = webp(picture.files["webp"])
     assert canvas == (160, 120)
-    assert sum(times) == 3040  # 38 frames of 80 ms
+    assert sum(times) == 2800  # 35 frames of 80 ms
     assert times[-1] > 1500 and loops == 0
 
 

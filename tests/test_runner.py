@@ -544,3 +544,12 @@ def test_a_probe_with_a_crop_that_is_not_found_runs_no_step_and_reports_the_page
     assert stage.calls == [CROP, "report", CLEANUP]
     assert (result.failed.index, result.failed.error) == (0, f"{CROP}: 2 elements match")
     assert result.crop is None
+
+
+def test_the_stage_is_told_the_notes_so_that_it_can_make_room_for_them(tmp_path):
+    steps = [{"note": "Pick a plane", "do": [click("A")]}, {"do": [click("B")]}, {"note": "Then a layer", "do": [click("C")]}]
+    _, stage, _ = picture(tmp_path, steps, crop=PANEL)
+    assert stage.crop_notes == ("Pick a plane", "Then a layer")
+    stage = FakeStage()
+    run_probe(board(tmp_path, steps, crop=PANEL), stage)
+    assert stage.crop_notes == ("Pick a plane", "Then a layer")

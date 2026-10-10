@@ -80,6 +80,21 @@ def test_in_a_crop_the_first_candidate_faces_the_middle_of_the_crop():
     assert side(marks.arrows(target, VIEWPORT, crop=Box(0, 0, 400, 720))[0]) == (-1, 0)
 
 
+def test_an_arrow_is_shorter_in_a_small_picture():
+    # A crop of 332 by 175 pixels has no room for an arrow of 150 with words at its end.
+    target = Box(1612, 440, 90, 30)
+    small = Box(1588, 325, 332, 175)
+    for candidate in marks.arrows(target, (1920, 1080), crop=small):
+        assert math.dist(candidate.tail, candidate.tip) == pytest.approx(0.4 * 175)
+    for candidate in marks.arrows(target, (1920, 1080)):
+        assert math.dist(candidate.tail, candidate.tip) == pytest.approx(marks.ARROW_LENGTH)
+
+
+def test_an_arrow_keeps_a_length_that_can_be_seen():
+    for candidate in marks.arrows(Box(20, 20, 30, 20), (1920, 1080), crop=Box(0, 0, 80, 60)):
+        assert math.dist(candidate.tail, candidate.tip) == pytest.approx(marks.ARROW_SHORTEST)
+
+
 def test_an_arrow_stops_short_of_its_target():
     for candidate in marks.arrows(BUTTON, VIEWPORT):
         assert 10 <= away(candidate.tip, BUTTON) <= 25

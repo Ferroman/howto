@@ -193,19 +193,21 @@ steps:
 You write and probe it as you do a video. The differences:
 
 - **Nothing is spoken.** `say` is ignored and no title card is shown. A `note` and the [marks](#marks) carry the explanation, so here you use them without being asked. A step lasts as long as its actions and its `pause`.
-- **`crop` names the one part of the page that the picture shows**: a panel, a form, a dialog. Use it whenever the subject is a part of the page. The whole window, scaled down to fit a document, has text too small to read. Notes and arrows are placed inside the crop.
-- **A probe prints the crop first**: `crop: 344 x 242 pixels at 1588, 69`. That is the size of the picture. Under about 300 pixels wide there is room for a note of two words only.
-- **The crop is one fixed part of the window**, measured once, on the page as `setup` leaves it. If the page loads something late, wait for it in `setup`. In a storyboard with a `crop`, use no `goto` and no `scroll_to` in the steps, and no `zoom`: the storyboard is refused with both.
+- **`crop` names the one part of the page that the picture shows**: a panel, a form, a dialog. Use it whenever the subject is a part of the page. The whole window, scaled down to fit a document, has text too small to read.
+- **A note never covers the crop.** The notes are written in a dark strip under it, which is part of the picture. A long note is folded onto more lines and the strip grows for it, so keep each note to a few words.
+- **An arrow stays inside the crop**, and it is shorter in a small one. Give it a `note` of one or two words, or none.
+- **A probe prints the picture first**: `crop: 332 x 222 pixels at 1588, 324`. That is the crop with its strip.
+- **The crop is one fixed part of the window**, measured once, on the page as `setup` leaves it. If the page loads something late, wait for it in `setup`. In a storyboard with a `crop`, use no `goto` and no `scroll_to` in the steps. `zoom` cannot be combined with `crop`: such a storyboard is refused.
 - **Keep it short**: one task, one to three steps, under ten seconds. End the last step with `pause: 1.5`, so that the viewer sees the result before the loop starts again.
 
 The command prints one line for each file, with the size of the picture, its length and the size of the file:
 
 ```
-docs/style.gif  344x242  5.4 s  412 KB
-docs/style.webp  344x242  5.4 s  118 KB
+docs/style.gif  332x222  5.4 s  412 KB
+docs/style.webp  332x222  5.4 s  118 KB
 ```
 
-Report those lines. The GIF plays everywhere, and the WebP is three to four times smaller. A picture over about 2 MB is too heavy for a README: shorten the steps or crop to a smaller element.
+Report those lines. The GIF plays everywhere, and the WebP is about three times smaller. A picture over about 2 MB is too heavy for a README: shorten the steps or crop to a smaller element.
 
 | Option | Meaning |
 |---|---|

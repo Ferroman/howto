@@ -98,9 +98,10 @@ class FakeStage:
         if animate:
             self._spend(self.clear_seconds)
 
-    def crop_to(self, action) -> Box:
+    def crop_to(self, action, notes=()) -> Box:
         described = action.describe()
         self.calls.append(described)
+        self.crop_notes = tuple(notes)
         if described in self.fail_on:
             raise StepFailed(f"{described}: {self.fail_on[described]}")
         return self.CROP_BOX

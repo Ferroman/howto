@@ -1,6 +1,6 @@
 import pytest
 
-from howto.zoom import CROP_MARGIN, MARGIN, Box, Window, crop, frame, inside, on_screen
+from howto.zoom import CROP_MARGIN, MARGIN, Box, Window, crop, frame, inside, on_screen, strip, union
 
 VIEWPORT = (1280, 720)
 
@@ -76,10 +76,12 @@ def test_a_crop_is_the_element_and_a_little_around_it():
     assert cut == Box(400 - CROP_MARGIN, 200 - CROP_MARGIN, 320 + 2 * CROP_MARGIN, 218 + 2 * CROP_MARGIN)
 
 
-def test_a_crop_is_in_whole_pixels_and_loses_nothing_of_the_element():
-    cut = crop(Box(400.4, 200.8, 320.3, 218.1), VIEWPORT)
-    assert all(value == int(value) for value in (cut.x, cut.y, cut.width, cut.height))
-    assert inside(Box(400.4, 200.8, 320.3, 218.1), cut)
+@pytest.mark.parametrize("box", [Box(400.4, 200.8, 320.3, 218.1), Box(401, 201, 319, 217), Box(13, 13, 99, 99)])
+def test_a_crop_is_in_even_pixels_and_loses_nothing_of_the_element(box):
+    # ffmpeg cuts a recording at even pixels only, so an odd crop would come out one pixel smaller than it says.
+    cut = crop(box, VIEWPORT)
+    assert all(value % 2 == 0 for value in (cut.x, cut.y, cut.width, cut.height))
+    assert inside(Box(box.x - 10, box.y - 10, box.width + 20, box.height + 20), cut)
 
 
 @pytest.mark.parametrize(
@@ -105,3 +107,31 @@ def test_inside_means_the_whole_box():
     assert inside(Box(200, 200, 50, 50), cut)
     assert not inside(Box(480, 200, 50, 50), cut)  # its right edge is beyond
     assert not inside(Box(600, 200, 50, 50), cut)
+
+
+def test_the_notes_of_a_crop_get_a_strip_under_it():
+    # Under the crop, not on it: in a small picture a note would cover what it explains.
+    assert strip(Box(948, 88, 324, 424), 45.2, VIEWPORT) == (Box(948, 512, 324, 46), True)
+
+
+def test_the_strip_goes_above_a_crop_at_the_bottom_of_the_window():
+    assert strip(Box(88, 648, 124, 64), 46, VIEWPORT) == (Box(88, 602, 124, 46), True)
+
+
+def test_with_no_room_outside_the_strip_is_the_lowest_part_of_the_crop():
+    assert strip(Box(0, 0, 1280, 720), 46, VIEWPORT) == (Box(0, 674, 1280, 46), False)
+    assert strip(Box(948, 20, 324, 690), 46, VIEWPORT) == (Box(948, 664, 324, 46), False)
+
+
+def test_a_strip_has_an_even_height():
+    assert strip(Box(948, 88, 324, 424), 44.3, VIEWPORT)[0].height == 46
+    assert strip(Box(948, 88, 324, 424), 46.0, VIEWPORT)[0].height == 46
+
+
+def test_a_strip_is_never_taller_than_its_crop():
+    assert strip(Box(0, 0, 1280, 720), 2000, VIEWPORT) == (Box(0, 0, 1280, 720), False)
+
+
+def test_the_picture_is_the_crop_and_its_strip_together():
+    assert union(Box(948, 88, 324, 424), Box(948, 512, 324, 46)) == Box(948, 88, 324, 470)
+    assert union(Box(88, 648, 124, 64), Box(88, 602, 124, 46)) == Box(88, 602, 124, 110)

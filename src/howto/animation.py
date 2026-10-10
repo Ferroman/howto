@@ -24,10 +24,15 @@ from .zoom import Box
 # double the file for movement that is hardly smoother.
 FPS = 12.5
 FORMATS = ("gif", "webp")
+# Seconds at the start of the recording that the picture leaves out. The
+# recorder's first frame is taken before its overlays are drawn, so the strip
+# for the notes is missing from it, and the picture would flash at every loop.
+# A take begins with half a second in which nothing happens, so nothing is lost.
+HEAD = 0.2
 # One palette for the whole picture, made from what changes between frames.
-# No dither: its noise differs from frame to frame, and that is most of a
-# GIF's size. An interface has few colours, so the bands that dither hides
-# are rare.
+# No dither: its noise differs from frame to frame, so that no frame repeats,
+# and a GIF was a quarter smaller without it. An interface has few colours, so
+# the bands that dither hides are rare.
 PALETTE = "split[a][b];[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=none:diff_mode=rectangle"
 
 
@@ -62,12 +67,12 @@ def filters(crop: Box | None, viewport: tuple[int, int], width: int) -> str:
     return ",".join(chain)
 
 
-def frames_command(ffmpeg: str, video: Path, length: float, chain: str) -> list[str]:
+def frames_command(ffmpeg: str, video: Path, start: float, length: float, chain: str) -> list[str]:
     """Writes the frames that differ as PNG files into the current directory, named by their number."""
     return [
         ffmpeg, "-y", "-loglevel", "error",
         # Before the input: the recorder runs on after the take, and the picture ends with the take.
-        "-t", f"{length:.3f}", "-i", str(video), "-an",
+        "-ss", f"{start:.3f}", "-t", f"{length:.3f}", "-i", str(video), "-an",
         "-vf", chain,
         # vfr keeps the gaps that the dropped frames left, and frame_pts names each file by its place in time.
         "-fps_mode", "vfr", "-frame_pts", "1",
@@ -138,7 +143,11 @@ def animate(
     # ffmpeg reads a % in the name of a frame as a place for its number, and
     # the path of the work directory may hold one. So it runs inside the
     # directory, and the list below names the frames without a path.
-    run(frames_command(ffmpeg, video.resolve(), length, filters(crop, viewport, width)), "ffmpeg (frames)", cwd=frames_dir)
+    # A take that is hardly longer than the head is kept whole: a flash is better than no picture.
+    start = HEAD if length > 2 * HEAD else 0.0
+    length -= start
+    command = frames_command(ffmpeg, video.resolve(), start, length, filters(crop, viewport, width))
+    run(command, "ffmpeg (frames)", cwd=frames_dir)
     names = sorted(path.name for path in frames_dir.glob("*.png"))
     if not names:
         raise RunError(f"ffmpeg (frames): no picture in {video}")

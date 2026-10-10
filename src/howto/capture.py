@@ -10,7 +10,7 @@ import re
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
+from typing import Iterator, Sequence
 
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page, sync_playwright
@@ -30,14 +30,30 @@ SETTLE_MS = 300
 # The note has a z-index because a spotlight would otherwise darken it: the
 # marks are shown after it, and what is shown later lies on top.
 NOTE_STYLE = (
-    "position:fixed;z-index:2;"
+    "position:fixed;z-index:2;left:50%;bottom:48px;transform:translateX(-50%);max-width:70%;"
     "padding:14px 22px;border-radius:10px;background:rgba(20,20,24,.88);color:#fff;"
     "font:500 22px/1.35 system-ui,sans-serif;box-shadow:0 6px 24px rgba(0,0,0,.35)"
 )
-# Where the note lies in a picture of the whole window: at the bottom, in the middle.
-NOTE_PLACE = "left:50%;bottom:48px;transform:translateX(-50%);max-width:70%"
-# Pixels between a note and the edges of the crop it lies in.
-NOTE_INSET = 12
+# In a picture that is cut to a crop, a note is not laid on the page: it is
+# written in a strip next to the crop, which `zoom.strip` places. The strip is
+# dark for the whole take, so that the page under it never shows.
+STRIP_COLOUR = "#17171c"
+STRIP_STYLE = (
+    f"box-sizing:border-box;padding:10px 14px;background:{STRIP_COLOUR};color:#fff;text-align:center;"
+    "font:500 18px/1.35 system-ui,sans-serif"
+)
+# How tall each note is in a strip of this width. It is measured in the page
+# with the page's own styles switched off, because the overlay layer cannot be
+# measured from outside.
+STRIP_HEIGHTS = """([texts, width, style]) => texts.map((text) => {
+  const probe = document.createElement('div');
+  probe.style.cssText = `all:initial;display:block;position:fixed;visibility:hidden;left:0;top:0;width:${width}px;${style}`;
+  probe.textContent = text;
+  document.documentElement.appendChild(probe);
+  const height = probe.getBoundingClientRect().height;
+  probe.remove();
+  return height;
+})"""
 # show_actions also writes each action's locator on the picture, for example
 # `Click get_by_role("button", name="Save")`, and has no option that turns it
 # off. An overlay may carry a style element, and this rule hides the element
@@ -175,18 +191,23 @@ def action_timeout() -> float:
     return seconds if seconds > 0 else DEFAULT_TIMEOUT
 
 
-def note_html(text: str, crop: zoom.Box | None = None) -> str:
-    """The note of a step. In a picture that is cut to `crop` it lies at the bottom of that part."""
-    place = NOTE_PLACE
-    if crop is not None:
-        # Without a width of its own the note would be folded to fit between
-        # its `left` and the edge of the window, however narrow that is.
-        place = (
-            f"left:{crop.x + crop.width / 2:g}px;top:{crop.y + crop.height - NOTE_INSET:g}px;"
-            f"transform:translate(-50%,-100%);box-sizing:border-box;"
-            f"width:max-content;max-width:{crop.width - 2 * NOTE_INSET:g}px"
-        )
-    return f'<div style="{NOTE_STYLE};{place}">{html.escape(text)}</div>'
+def _placed(box: zoom.Box) -> str:
+    return f"position:fixed;left:{box.x:g}px;top:{box.y:g}px;width:{box.width:g}px;height:{box.height:g}px"
+
+
+def note_html(text: str, strip: zoom.Box | None = None) -> str:
+    """The note of a step: a box at the bottom of the window, or the words in the strip of a cropped picture."""
+    if strip is None:
+        return f'<div style="{NOTE_STYLE}">{html.escape(text)}</div>'
+    return (
+        f'<div style="{_placed(strip)};z-index:2;display:flex;align-items:center;justify-content:center;{STRIP_STYLE}">'
+        f"{html.escape(text)}</div>"
+    )
+
+
+def strip_html(strip: zoom.Box) -> str:
+    """The strip with no words in it."""
+    return f'<div style="{_placed(strip)};z-index:1;background:{STRIP_COLOUR}"></div>'
 
 
 def resolve(scope, locator: Locator):
@@ -255,8 +276,13 @@ class PlaywrightStage:
         self._label_rule = None
         self._note = None
         self._marks: list = []
-        # The part of the window that the picture is cut to. None is the whole window.
+        # The part of the window that a picture is cut to, where marks may be
+        # drawn. None is the whole window. Its notes go in the strip, and
+        # `_strip_shown` is the strip itself while a take shows it empty.
         self._crop: zoom.Box | None = None
+        self._strip: zoom.Box | None = None
+        self._strip_outside = False
+        self._strip_shown = None
         self._dialogs: list[str] = []
         self._unzoomable: list[str] = []
         self._left_out: list[str] = []
@@ -376,29 +402,37 @@ class PlaywrightStage:
         finally:
             self._interrupt.check()
 
-    def crop_to(self, action: Action) -> zoom.Box:
-        """Cuts the picture to the element an action names, and returns that part of the window.
+    def crop_to(self, action: Action, notes: Sequence[str]) -> zoom.Box:
+        """Cuts the picture to the element an action names, and returns the part of the window to cut out.
 
         The recording still shows the whole window, and whoever makes the
-        picture cuts it out. What changes here is where a note and an arrow
-        are placed: inside the part that will be seen.
+        picture cuts it out. What changes here is where things are drawn. An
+        arrow stays inside the crop. The notes get a strip next to it, as tall
+        as the longest of them needs, and the picture grows by that strip.
         """
         self._interrupt.check()
         try:
-            target = self._one(action)
-            box = self._box(target)
-            if box is not None and not zoom.on_screen(box, self.viewport):
-                target.scroll_into_view_if_needed(timeout=self.timeout_ms)
-                box = self._box(target)
+            return self._crop_to(action, notes)
         except PlaywrightError as exc:
             raise StepFailed(f"{action.describe()}: {failure_reason(str(exc))}") from None
         finally:
             self._interrupt.check()
+
+    def _crop_to(self, action: Action, notes: Sequence[str]) -> zoom.Box:
+        target = self._one(action)
+        box = self._box(target)
+        if box is not None and not zoom.on_screen(box, self.viewport):
+            target.scroll_into_view_if_needed(timeout=self.timeout_ms)
+            box = self._box(target)
         crop = zoom.crop(box, self.viewport) if box is not None else None
         if crop is None:
             raise StepFailed(f"{action.describe()}: the element has no size, so there is no picture to cut to it")
-        self._crop = crop
-        return crop
+        self._crop, self._strip, self._strip_outside = crop, None, False
+        if not notes:
+            return crop
+        heights = self.page.evaluate(STRIP_HEIGHTS, [list(notes), crop.width, STRIP_STYLE])
+        self._strip, self._strip_outside = zoom.strip(crop, max(heights), self.viewport)
+        return zoom.union(crop, self._strip)
 
     def _mark(self, action: Action, draw: bool) -> None:
         target = self._one(action)
@@ -525,6 +559,14 @@ class PlaywrightStage:
 
     def start_recording(self, path: Path) -> None:
         width, height = self.viewport
+        if self._strip is not None and self._strip_outside:
+            # A strip outside the crop lies on a part of the page that is not
+            # the picture's subject, so it is there for the whole take, with
+            # a note or without. The recorder's first frame still comes before
+            # it is drawn, which is why a picture leaves out the head of the
+            # recording (`animation.HEAD`). A strip inside the crop is shown
+            # with its note only.
+            self._strip_shown = self.page.screencast.show_overlay(strip_html(self._strip))
         self.page.screencast.start(path=str(path), size={"width": width, "height": height})
         self.page.screencast.show_actions(cursor="pointer")
         self._label_rule = self.page.screencast.show_overlay(HIDE_ACTION_LABEL)
@@ -535,13 +577,16 @@ class PlaywrightStage:
             self.page.screencast.hide_actions()
             _remove(self._label_rule)
             self._label_rule = None
+        if self._strip_shown is not None:
+            _remove(self._strip_shown)
+            self._strip_shown = None
         self.page.screencast.stop()
 
     def show_chapter(self, title: str, seconds: float) -> None:
         self.page.screencast.show_chapter(title, duration=seconds * 1000)
 
     def show_note(self, text: str) -> None:
-        self._note = self.page.screencast.show_overlay(note_html(text, self._crop))
+        self._note = self.page.screencast.show_overlay(note_html(text, self._strip))
 
     def hide_note(self) -> None:
         if self._note is not None:

@@ -88,8 +88,20 @@ def inside(box: Box, outer: Box) -> bool:
     )
 
 
+def _even_down(value: float) -> int:
+    return 2 * math.floor(value / 2)
+
+
+def _even_up(value: float) -> int:
+    return 2 * math.ceil(value / 2)
+
+
 def crop(box: Box, viewport: tuple[int, int]) -> Box | None:
-    """The part of the window that a picture of this element is cut to, in whole pixels.
+    """The part of the window that a picture of this element is cut to.
+
+    Its corner and its size are even numbers of pixels. The recording keeps
+    colour for every second pixel only, and ffmpeg moves a cut that does not
+    fall on those pixels to the next one that does.
 
     None for an element that has no size or lies outside the window: a margin
     alone is not a picture.
@@ -99,8 +111,32 @@ def crop(box: Box, viewport: tuple[int, int]) -> Box | None:
         return None
     if box.x >= width or box.y >= height or box.x + box.width <= 0 or box.y + box.height <= 0:
         return None
-    left = max(0, math.floor(box.x) - CROP_MARGIN)
-    top = max(0, math.floor(box.y) - CROP_MARGIN)
-    right = min(width, math.ceil(box.x + box.width) + CROP_MARGIN)
-    bottom = min(height, math.ceil(box.y + box.height) + CROP_MARGIN)
+    left = max(0, _even_down(box.x - CROP_MARGIN))
+    top = max(0, _even_down(box.y - CROP_MARGIN))
+    right = min(width, _even_up(box.x + box.width + CROP_MARGIN))
+    bottom = min(height, _even_up(box.y + box.height + CROP_MARGIN))
+    return Box(left, top, right - left, bottom - top)
+
+
+def strip(crop: Box, height: float, viewport: tuple[int, int]) -> tuple[Box, bool]:
+    """Where the notes of a cropped picture go: a strip as wide as the crop, and whether it lies outside the crop.
+
+    A note that lay on the crop would cover what it explains, and a crop is
+    often small. So the strip goes under the crop, and the picture grows by
+    it. At the bottom of the window it goes above. A crop as tall as the
+    window leaves no room, and there the strip is the lowest part of the crop.
+    """
+    tall = min(_even_up(height), crop.height)
+    below = crop.y + crop.height
+    if below + tall <= viewport[1]:
+        return Box(crop.x, below, crop.width, tall), True
+    if crop.y - tall >= 0:
+        return Box(crop.x, crop.y - tall, crop.width, tall), True
+    return Box(crop.x, below - tall, crop.width, tall), False
+
+
+def union(a: Box, b: Box) -> Box:
+    """The smallest box that holds both."""
+    left, top = min(a.x, b.x), min(a.y, b.y)
+    right, bottom = max(a.x + a.width, b.x + b.width), max(a.y + a.height, b.y + b.height)
     return Box(left, top, right - left, bottom - top)

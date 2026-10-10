@@ -4,7 +4,7 @@ import subprocess
 import pytest
 import yaml
 
-from pictures import dimensions, gif_frames, redness, webp
+from pictures import brightness, dimensions, gif_frames, redness, webp
 
 from howto import cli
 from howto.errors import RunError
@@ -229,27 +229,31 @@ def test_a_storyboard_with_a_crop_probes_and_animates(chromium, site_url, real_f
     assert cli.main(["probe", str(path)]) == 0
     out = capsys.readouterr().out
     # The panel is 300 by 400 pixels at (960, 100), and a crop keeps 12 pixels around it.
-    assert out.startswith('crop: 324 x 424 pixels at 948, 88\nstep 1 ok      chapter "Style"; arrow role=button name="Edge"; box')
+    # Under it come 46 pixels for the note: one line of 18 pixels at 1.35 and 20 of padding, made even.
+    assert out.startswith('crop: 324 x 470 pixels at 948, 88\nstep 1 ok      chapter "Style"; arrow role=button name="Edge"; box')
     assert "note:" not in out
 
     assert cli.main(["animate", str(path)]) == 0
     gif, picture = path.parent / "style.gif", path.parent / "style.webp"
     lines = capsys.readouterr().out.splitlines()
-    assert [line.split("  ")[:2] for line in lines] == [[str(gif), "324x424"], [str(picture), "324x424"]]
+    assert [line.split("  ")[:2] for line in lines] == [[str(gif), "324x470"], [str(picture), "324x470"]]
     assert sorted(p.name for p in path.parent.iterdir()) == ["style.gif", "style.webp", "style.yaml"]
     assert list(sandbox.work.iterdir()) == []
 
-    assert dimensions(real_ffmpeg[1], gif) == (324, 424)
+    assert dimensions(real_ffmpeg[1], gif) == (324, 470)
     frames = gif_frames(real_ffmpeg[1], gif)
     seconds = frames[-1][0] + frames[-1][1]
     # Lead, two marks, their hold, the click and the gap come to some 3 s, and then the pause of 1 s.
     assert 3.0 < seconds < 8.0
     assert f"  {seconds:.1f} s  " in lines[0]
     canvas, times, loops = webp(picture)
-    assert (canvas, loops) == ((324, 424), 0)
+    assert (canvas, loops) == ((324, 470), 0)
     assert sum(times) == round(seconds * 1000)
     # The box around Apply, 8 pixels above the button at (980, 120). In the
     # picture that is (32, 24): the cut is where the crop said.
     stroke = redness(gif, x=52, y=20, width=60, height=8)
     assert max(stroke) > 20, "the mark is not in the picture"
     assert stroke[-1] < 5, "the picture ends with the mark still on it"
+    # The note has a strip of its own under the panel, which ends at y = 424 of the picture.
+    strip = brightness(gif, x=4, y=430, width=16, height=30)
+    assert max(strip) < 60, "no strip for the note under the crop"

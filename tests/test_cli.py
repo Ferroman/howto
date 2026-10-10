@@ -267,10 +267,10 @@ def test_animate_writes_both_pictures_next_to_the_storyboard(browser, fakes, tmp
     assert cli.main(["animate", str(path)]) == 0
     folder = path.parent
     assert sorted(p.name for p in folder.iterdir()) == ["demo.gif", "demo.webp", "demo.yaml"]
-    # Two steps of lead 0.5 + gap 0.4 are 1.8 s, which is 23 frames of 0.08 s.
+    # Two steps of lead 0.5 + gap 0.4 are 1.8 s. The picture leaves out the first 0.2 s of the recording.
     assert capsys.readouterr().out.splitlines() == [
-        f"{folder / 'demo.gif'}  960x540  1.8 s  1 KB",
-        f"{folder / 'demo.webp'}  960x540  1.8 s  1 KB",
+        f"{folder / 'demo.gif'}  960x540  1.6 s  1 KB",
+        f"{folder / 'demo.webp'}  960x540  1.6 s  1 KB",
     ]
     assert browser.headless is True
     assert browser.stage.calls == ["start_recording", CLICK_A, CLICK_B, "stop_recording", CLEANUP]

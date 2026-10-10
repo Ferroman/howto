@@ -32,6 +32,9 @@ FADE_MS = 250
 FADE_PROPERTY = "--howto-marks"
 
 ARROW_LENGTH = 150.0
+# In a small picture an arrow is shorter: this part of the picture's shorter side, and never less than the shortest.
+ARROW_PART = 0.4
+ARROW_SHORTEST = 48.0
 ARROW_GAP = 14.0
 ARROW_HEAD = 22.0
 WORDS_FONT = 22
@@ -177,6 +180,7 @@ def arrows(
     picture = crop or Box(0, 0, *viewport)
     cx, cy = target.x + target.width / 2, target.y + target.height / 2
     middle = math.atan2(picture.y + picture.height / 2 - cy, picture.x + picture.width / 2 - cx)
+    length = max(ARROW_SHORTEST, min(ARROW_LENGTH, ARROW_PART * min(picture.width, picture.height)))
     angles = sorted(
         (k * math.pi / 4 for k in range(8)),
         key=lambda angle: round(abs(math.remainder(angle - middle, math.tau)), 9),
@@ -190,8 +194,8 @@ def arrows(
             (target.height / 2 + ARROW_GAP) / abs(uy) if abs(uy) > 1e-6 else math.inf,
         )
         tip = (cx + ux * reach, cy + uy * reach)
-        tail = (tip[0] + ux * ARROW_LENGTH, tip[1] + uy * ARROW_LENGTH)
-        sideways = 0.16 * ARROW_LENGTH
+        tail = (tip[0] + ux * length, tip[1] + uy * length)
+        sideways = 0.16 * length
         bend = ((tip[0] + tail[0]) / 2 - uy * sideways, (tip[1] + tail[1]) / 2 + ux * sideways)
         lies = (round(ux), round(uy))
         words = None
