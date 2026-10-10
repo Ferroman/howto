@@ -133,6 +133,24 @@ def test_pace_overrides():
     assert sb.pace == Pace(lead=1.0, typing=40.0)
 
 
+def test_the_picture_stays_wide_unless_zoom_is_asked_for():
+    sb = parse(board(), Path("demo.yaml"))
+    assert sb.zoom == 1.0
+    assert [step.zoom for step in sb.steps] == [None, None, None]
+
+
+def test_zoom_for_the_whole_video_and_for_one_step():
+    steps = [{"say": "One.", "do": [{"click": {"label": "x"}}]}, {"say": "Two.", "zoom": "1"}, {"say": "Three.", "zoom": 3}]
+    sb = parse(board(zoom="2.5", steps=steps), Path("demo.yaml"))
+    assert sb.zoom == 2.5
+    assert [step.zoom for step in sb.steps] == [None, 1.0, 3.0]
+
+
+def test_pace_carries_the_time_a_zoom_is_held():
+    assert Pace().zoom_hold == 0.9
+    assert parse(board(pace={"zoom_hold": "0.3"}), Path("demo.yaml")).pace.zoom_hold == 0.3
+
+
 @pytest.mark.parametrize(
     "data, fragment",
     [
@@ -165,6 +183,12 @@ def test_pace_overrides():
         (board(pace={"gap": -1}), "`pace`: `gap` must be 0 or more"),
         (board(setup=[{"clik": {"label": "x"}}]), "`setup[1]`: unknown action `clik`"),
         (board(cleanup="click"), "`cleanup` must be a list of actions"),
+        (board(zoom="0.5"), "`zoom` must be a number from 1 to 4"),
+        (board(zoom="5"), "`zoom` must be a number from 1 to 4"),
+        (board(zoom="big"), "`zoom` must be a number from 1 to 4"),
+        (board(zoom=True), "`zoom` must be a number from 1 to 4"),
+        (one_step({"say": "Hi.", "zoom": "0"}), "step 1: `zoom` must be a number from 1 to 4"),
+        (one_step({"say": "Hi.", "zoom": {"factor": 2}}), "step 1: `zoom` must be a number from 1 to 4"),
     ],
 )
 def test_invalid_storyboards_name_the_problem(data, fragment):

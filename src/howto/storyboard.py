@@ -20,8 +20,10 @@ LOCATOR_EXTRAS = ("name", "exact", "nth", "within")
 LOCATOR_ACTIONS = ("click", "hover", "scroll_to", "wait_for")
 VALUE_ACTIONS = {"fill": "value", "select": "option"}
 STRING_ACTIONS = ("goto", "press")
-TOP_FIELDS = ("title", "url", "steps", "profile", "viewport", "setup", "cleanup", "pace")
-STEP_FIELDS = ("say", "do", "chapter", "note", "pause")
+TOP_FIELDS = ("title", "url", "steps", "profile", "viewport", "setup", "cleanup", "pace", "zoom")
+STEP_FIELDS = ("say", "do", "chapter", "note", "pause", "zoom")
+# How far the picture may be enlarged. At 4 a 1920-pixel page shows 480 pixels.
+MAX_ZOOM = 4.0
 PROFILE_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 VIEWPORT_RE = re.compile(r"^([1-9]\d{2,4})x([1-9]\d{2,4})$")
 # A sentence ends at ., ! or ? followed by white space. "2.5" has no white
@@ -101,6 +103,8 @@ class Step:
     chapter: str | None = None
     note: str | None = None
     pause: float = 0.0
+    # None: the storyboard's own `zoom` applies.
+    zoom: float | None = None
 
 
 @dataclass(frozen=True)
@@ -110,6 +114,8 @@ class Pace:
     sentence_gap: float = 0.15
     typing: float = 25.0
     chapter_hold: float = 2.0
+    # Seconds the picture stays enlarged after the last action of a step.
+    zoom_hold: float = 0.9
 
 
 @dataclass(frozen=True)
@@ -123,6 +129,8 @@ class Storyboard:
     setup: tuple[Action, ...] = ()
     cleanup: tuple[Action, ...] = ()
     pace: Pace = Pace()
+    # How much the picture is enlarged around the target of an action. 1 is not at all.
+    zoom: float = 1.0
 
     @property
     def name(self) -> str:
@@ -242,6 +250,13 @@ def _parse_say(value: object, where: str) -> tuple[str, ...]:
     return split_sentences(_text(value, f"{where}: `say`"))
 
 
+def _parse_zoom(value: object, prefix: str) -> float:
+    number = _number(value)
+    if number is None or not 1 <= number <= MAX_ZOOM:
+        raise StoryboardError(f"{prefix}`zoom` must be a number from 1 to {MAX_ZOOM:g}")
+    return number
+
+
 def parse_step(data: object, index: int) -> Step:
     where = f"step {index}"
     if not isinstance(data, dict):
@@ -261,6 +276,7 @@ def parse_step(data: object, index: int) -> Step:
         chapter=_text(data["chapter"], f"{where}: `chapter`") if "chapter" in data else None,
         note=_text(data["note"], f"{where}: `note`") if "note" in data else None,
         pause=pause,
+        zoom=_parse_zoom(data["zoom"], f"{where}: ") if "zoom" in data else None,
     )
 
 
@@ -324,6 +340,7 @@ def parse(data: object, path: Path) -> Storyboard:
         setup=_parse_actions(data.get("setup"), "", "setup"),
         cleanup=_parse_actions(data.get("cleanup"), "", "cleanup"),
         pace=_parse_pace(data.get("pace")),
+        zoom=_parse_zoom(data["zoom"], "") if "zoom" in data else 1.0,
     )
 
 
