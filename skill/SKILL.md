@@ -246,6 +246,7 @@ The narration has one voice, the speech command's own. The user can have others,
 - A render takes as long as the video, plus about a minute, and twice the length of the narration more when a `voice` speaks it for the first time. Give the command that much time. If a render, an animation or a probe is cut off before it ends, run `howto probe FILE` once: a probe ends with the cleanup actions.
 - When `setup` fails on a storyboard that has a profile, the session is probably signed out. Ask the user to run `howto login NAME URL`.
 - When a render or an animation fails, fix the storyboard and run it again. An earlier video or picture is never replaced by a failed run.
+- When `howto` says that no speech command was found, or that the speech command cannot make or clone a voice, stop and tell the user what it said. Setting up speech is theirs to do, and the README has a section for it. `howto probe` and `howto animate` work without speech.
 
 ## Exit codes
 

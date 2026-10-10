@@ -1,7 +1,9 @@
 """Finds ffmpeg and ffprobe, and runs external programs.
 
-On the workstation /usr/local/bin/ffprobe is a firejail wrapper that exits
-with 127, so PATH is the last place to look, not the first.
+A Homebrew ffmpeg on Linux is preferred to the one on PATH. On a machine with
+firejail, /usr/local/bin/ffprobe can be a sandbox wrapper that exits with 127
+when another program runs it, so PATH is the last place to look, not the
+first. On a machine without Homebrew this changes nothing.
 """
 from __future__ import annotations
 

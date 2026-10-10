@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Acme Workspace</title>
+<!--
+  A demo page for the storyboards next to this folder. It has no server and
+  keeps nothing: every load starts with the same three members, so a
+  storyboard needs no cleanup. The address ends in #settings to open the
+  Settings view at once.
+-->
+<style>
+  :root { --ink: #1c2330; --soft: #5b6676; --line: #d9dfe8; --paper: #f4f6fa; --card: #fff; --accent: #2456d6; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 17px/1.5 system-ui, sans-serif; color: var(--ink); background: var(--paper); }
+  header { display: flex; align-items: center; gap: 24px; padding: 14px 32px; background: var(--card); border-bottom: 1px solid var(--line); }
+  header strong { font-size: 19px; margin-right: auto; }
+  nav { display: flex; gap: 8px; }
+  button, input, select { font: inherit; color: inherit; }
+  nav button { padding: 8px 16px; border: 1px solid transparent; border-radius: 8px; background: none; cursor: pointer; }
+  nav button[aria-current="page"] { background: var(--paper); border-color: var(--line); font-weight: 600; }
+  main { max-width: 860px; margin: 40px auto; padding: 0 32px; }
+  h1 { font-size: 30px; margin: 0 0 8px; }
+  p.lead { margin: 0 0 28px; color: var(--soft); }
+  /* The card keeps its size when a member is added, so a picture can be cropped to it. */
+  section.card { height: 400px; padding: 24px 28px; background: var(--card); border: 1px solid var(--line); border-radius: 14px; display: flex; flex-direction: column; }
+  section.card h2 { font-size: 20px; margin: 0 0 12px; }
+  ul { list-style: none; margin: 0; padding: 0; flex: 1; }
+  li { display: flex; justify-content: space-between; padding: 9px 0; border-bottom: 1px solid var(--line); }
+  li span { color: var(--soft); }
+  form { display: flex; align-items: end; gap: 14px; }
+  form div { display: flex; flex-direction: column; gap: 4px; }
+  form div.grow { flex: 1; }
+  label { font-size: 14px; color: var(--soft); }
+  input, select { padding: 9px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); }
+  form button { padding: 10px 22px; border: 0; border-radius: 8px; background: var(--accent); color: #fff; font-weight: 600; cursor: pointer; }
+  p[role="status"] { min-height: 26px; margin: 12px 0 0; color: #17703a; font-weight: 600; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<header>
+  <strong>Acme Workspace</strong>
+  <nav aria-label="Main">
+    <button type="button" data-view="home">Home</button>
+    <button type="button" data-view="settings">Settings</button>
+  </nav>
+</header>
+
+<main id="home">
+  <h1>Home</h1>
+  <p class="lead">Welcome back. Your team is managed in Settings.</p>
+</main>
+
+<main id="settings" hidden>
+  <h1>Settings</h1>
+  <p class="lead">Everyone who can open this workspace.</p>
+  <section class="card" aria-labelledby="members-title">
+    <h2 id="members-title">Members</h2>
+    <ul id="members">
+      <li>ada@example.com <span>Admin</span></li>
+      <li>grace@example.com <span>Member</span></li>
+      <li>linus@example.com <span>Member</span></li>
+    </ul>
+    <form id="invite">
+      <div class="grow">
+        <label for="email">Email address</label>
+        <input id="email" type="email" required autocomplete="off">
+      </div>
+      <div>
+        <label for="role">Role</label>
+        <select id="role">
+          <option>Member</option>
+          <option>Admin</option>
+        </select>
+      </div>
+      <button type="submit">Invite</button>
+    </form>
+    <p role="status" id="status"></p>
+  </section>
+</main>
+
+<script>
+  function show(view) {
+    for (const main of document.querySelectorAll("main")) main.hidden = main.id !== view;
+    for (const button of document.querySelectorAll("nav button")) {
+      if (button.dataset.view === view) button.setAttribute("aria-current", "page");
+      else button.removeAttribute("aria-current");
+    }
+  }
+  for (const button of document.querySelectorAll("nav button")) {
+    button.addEventListener("click", () => show(button.dataset.view));
+  }
+  document.getElementById("invite").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const email = document.getElementById("email");
+    const role = document.getElementById("role");
+    const row = document.createElement("li");
+    row.append(email.value + " ");
+    const state = document.createElement("span");
+    state.textContent = role.value + ", invited";
+    row.append(state);
+    document.getElementById("members").append(row);
+    document.getElementById("status").textContent = "Invitation sent to " + email.value;
+    email.value = "";
+  });
+  show(location.hash === "#settings" ? "settings" : "home");
+</script>
+</body>
+</html>

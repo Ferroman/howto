@@ -1,0 +1,24 @@
+# An animated picture of one panel of the demo page in examples/site.
+#
+#   python3 -m http.server 8000 --directory examples/site
+#   howto animate examples/invite-picture.yaml
+#
+# Nothing is spoken here: the notes and the marks explain what happens.
+title: Invite a teammate
+url: http://localhost:8000/#settings
+viewport: 1280x720
+crop: {role: region, name: Members}
+setup:
+  - wait_for: {role: heading, name: Settings}
+steps:
+  - note: Type the address
+    do:
+      - fill: {label: Email address, value: sam@example.com}
+  - note: Choose a role
+    do:
+      - select: {label: Role, option: Admin}
+  - note: Press Invite
+    do:
+      - circle: {role: button, name: Invite}
+      - click: {role: button, name: Invite}
+    pause: 2

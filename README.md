@@ -1,136 +1,224 @@
 # howto
 
-`howto` turns a storyboard, a YAML file of steps and narration, into a narrated how-to video of a web app: an MP4 with SRT and WebVTT subtitles. From the same kind of file it makes a short animated picture, a GIF and a WebP, for documentation. An AI agent writes the storyboard by following `skill/SKILL.md`. The tool itself calls no model.
+[![tests](https://github.com/Ferroman/howto/actions/workflows/test.yml/badge.svg)](https://github.com/Ferroman/howto/actions/workflows/test.yml)
 
-The design, and the research behind it, are in the dotfiles repository: `~/p/.dotfiles/docs/superpowers/specs/2026-10-10-howto-video-design.md`.
+`howto` turns a storyboard, a YAML file of steps and narration, into a narrated how-to video of a web app: an MP4 with SRT and WebVTT subtitles. From the same kind of file it makes a short animated picture, a GIF and a WebP, to illustrate documentation.
+
+![Inviting a teammate: an animated picture made by howto](docs/media/invite-picture.gif)
+
+`howto animate` made that picture from [examples/invite-picture.yaml](examples/invite-picture.yaml). `howto render` made [this narrated video](docs/media/invite.mp4) from [examples/invite.yaml](examples/invite.yaml).
+
+- **A storyboard is the only input.** It names each control as a person would, `{role: button, name: Invite}`, and says what to tell the viewer at each step. `howto` performs it in a browser of its own, records it and speaks the narration.
+- **An AI agent can write the storyboard.** [skill/SKILL.md](skill/SKILL.md) teaches an agent the format. The agent explores your app with `howto probe`, which prints a text outline of the page, so a model without image input is enough. `howto` itself calls no model.
+- **Everything runs on your machine.** The browser is Playwright's Chromium. The speech comes from a command that you choose, and two come with `howto`.
+- **A change is cheap.** Each sentence is spoken once and kept, so a changed sentence costs one sentence, and a render is repeatable.
+
+## Status
+
+This is version 0.1.
+
+- **Linux only so far.** It is developed on an Ubuntu 24.04 system, and the tests run on Ubuntu. macOS and Windows are untried.
+- **Narration is in English.**
+- **Web apps only.** Whatever runs in a browser tab can be filmed. Desktop programs cannot.
 
 ## Requirements
 
-- `uv`
+- [`uv`](https://docs.astral.sh/uv/), which builds the Python environment
 - `ffmpeg` and `ffprobe`
-- A `tts` command that accepts `-l en -o FILE TEXT`. `HOWTO_TTS` names another command with the same arguments. For [voices](#voices) it must also accept `--design DESCRIPTION`, and `--clone WAV --clone-text WORDS`.
-- `img2webp`, from the `webp` package, for the WebP of an animated picture. Without it, `howto animate --format gif` still works.
+- `img2webp`, from the `webp` package, for the WebP of an animated picture. Without it, `howto animate --format gif` still works
+- A speech command, for narration. See [Speech](#speech). An animated picture needs none
 
 ## Install
 
 ```bash
+git clone https://github.com/Ferroman/howto.git
+cd howto
 bash install.sh
 ```
 
-The installer builds `~/.local/share/howto/venv`, downloads Playwright's Chromium, links `~/.local/bin/howto`, and links the skill into `~/.claude/skills`. It is safe to run again.
+The installer builds `~/.local/share/howto/venv`, downloads Playwright's Chromium (about 300 MB), and links three commands into `~/.local/bin`: `howto`, `howto-tts-kokoro` and `howto-tts-audiocpp`. When Claude Code is installed, it also links the skill into `~/.claude/skills`. It is safe to run again.
 
-pi loads the skill from the same folder when its settings list it: `"skills": ["~/.claude/skills"]` in `~/.pi/agent/settings.json`. Do not also link the skill into `~/.pi/agent/skills`, because pi would then find it twice.
+`~/.local/bin` has to be on your `PATH`. On a system that lacks the libraries Chromium needs, run `~/.local/share/howto/venv/bin/playwright install-deps chromium` once.
+
+## Quick start
+
+The repository has a small demo page and two storyboards for it. Serve the page in one terminal:
+
+```bash
+python3 -m http.server 8000 --directory examples/site
+```
+
+In another, make the animated picture. It needs no speech:
+
+```bash
+howto animate examples/invite-picture.yaml
+```
+
+```
+examples/invite-picture.gif  820x472  9.4 s  564 KB
+examples/invite-picture.webp  820x472  9.4 s  240 KB
+```
+
+For the narrated video, set up a speech command first. The quickest is Kokoro, described [below](#kokoro):
+
+```bash
+export HOWTO_TTS=howto-tts-kokoro
+howto render examples/invite.yaml
+```
+
+```
+examples/invite.mp4
+examples/invite.srt
+examples/invite.vtt
+```
+
+## A storyboard
+
+```yaml
+title: Invite a teammate
+url: http://localhost:8000/
+steps:
+  - chapter: Invite a teammate
+  - say: Open Settings, where the members of the workspace are managed.
+    do:
+      - click: {role: button, name: Settings}
+  - say: Type your teammate's email address, and choose a role.
+    do:
+      - fill: {label: Email address, value: sam@example.com}
+      - select: {label: Role, option: Admin}
+  - say: Then press Invite. Your teammate appears in the list of members.
+    do:
+      - arrow: {role: button, name: Invite, note: Sends the invitation}
+      - click: {role: button, name: Invite}
+```
+
+- **`say`** is the narration of a step, and **`do`** is what happens on the page while it is spoken.
+- **`howto probe FILE`** runs the steps without recording and reports the first one that fails, with an outline of the page as it is then. That is how a storyboard is written, by a person or by an agent: probe, correct, probe again.
+- **Marks** point at things: `box`, `circle`, `underline`, `arrow` and `spotlight`.
+- **`zoom: 2`** enlarges the page around each control as it is used.
+- **`crop`** cuts an animated picture to one part of the page.
+
+[skill/SKILL.md](skill/SKILL.md) is the full reference of the format. [docs/guide.md](docs/guide.md) is the guide for a person.
+
+## Let an agent write it
+
+The skill in `skill/` is written for an AI coding agent. The installer links it for Claude Code. Give any other agent the file `skill/SKILL.md`. Then ask in one sentence:
+
+> Make a how-to video: invite a teammate. Start at https://app.example.com, profile demo.
+
+The agent writes the storyboard, probes it until every step works, and renders it.
+
+**Every probe and every take performs its actions for real**, and an agent probes many times. Point it at a demo workspace or a test account, never at real data. For an app that needs a sign-in, run `howto login NAME URL` once: a browser window opens, you sign in, and the session stays in a profile that a storyboard names with `profile: NAME`.
+
+## Speech
+
+`howto` speaks through a command. It runs `tts` when `HOWTO_TTS` is not set, and it calls the command in three ways:
+
+```
+COMMAND -l en -o FILE TEXT                                    a sentence
+COMMAND -l en -o FILE --clone WAV --clone-text WORDS TEXT     a sentence in the voice of a clip
+COMMAND -l en -o FILE --design DESCRIPTION TEXT               a new voice, from a description
+```
+
+The command writes a WAV file and exits with 0. Any program that does this can be the speech command, and the first form alone is enough for a video without a `voice:`. Two commands come with `howto`:
+
+| Command | Engine | Voices | Needs |
+|---|---|---|---|
+| `howto-tts-kokoro` | [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M), through [kokoro-tts](https://github.com/nazdridoy/kokoro-tts) | Preset voices, chosen with `--voice` | A processor, and 350 MB of models |
+| `howto-tts-audiocpp` | [audio.cpp](https://github.com/0xShug0/audio.cpp) | One plain voice, and voices that you design | A graphics card helps. 0.4 GB of models, and 5.3 GB more for voices |
+
+### Kokoro
+
+```bash
+sudo apt install libportaudio2        # Debian and Ubuntu, when it is missing
+uv tool install --python 3.12 kokoro-tts
+curl -L --create-dirs -o ~/.local/share/howto/kokoro/kokoro-v1.0.onnx \
+    https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx
+curl -L --create-dirs -o ~/.local/share/howto/kokoro/voices-v1.0.bin \
+    https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin
+export HOWTO_TTS=howto-tts-kokoro
+```
+
+`kokoro-tts` needs the PortAudio library. A desktop system usually has it, and a server or a container usually lacks it.
+
+To have another voice, name it in the command: `HOWTO_TTS="howto-tts-kokoro --voice am_michael"`. `kokoro-tts --help-voices` lists them. The voice is an option because `howto` names each spoken clip after the command that spoke it, so another voice is spoken anew and nothing stale is played.
+
+On a 16-core processor a sentence takes about two seconds, nearly all of it the start of the program: 20 seconds of speech took five.
+
+### audio.cpp
+
+Download a release of [audio.cpp](https://github.com/0xShug0/audio.cpp/releases) for your machine and the models from [its model repository](https://huggingface.co/audio-cpp/audio.cpp-gguf), into one folder:
+
+| File under the folder | Used for | Size |
+|---|---|---|
+| `audiocpp_cli` | Everything | |
+| `models/Supertonic-3-GGUF/supertonic-3-q8_0.gguf` | A sentence without a `voice:` | 0.4 GB |
+| `models/Qwen3-TTS-12Hz-1.7B-Base-GGUF/qwen3-tts-12hz-1.7b-base-q8_0_v2.gguf` | A sentence in a voice | 2.6 GB |
+| `models/Qwen3-TTS-12Hz-1.7B-VoiceDesign-GGUF/qwen3-tts-12hz-1.7b-voicedesign-q8_0.gguf` | `howto voice`, which makes a voice | 2.7 GB |
+
+```bash
+export AUDIOCPP_DIR=~/audio.cpp
+export HOWTO_TTS=howto-tts-audiocpp
+```
+
+The engine chooses between the processor and a graphics card by itself. `AUDIOCPP_BACKEND=cpu AUDIOCPP_THREADS=16` keeps it on the processor, which is faster than a weak graphics card: a cloned voice took two to three seconds for a second of speech on 16 cores, and four on integrated graphics. `howto-tts-audiocpp --help` lists the other variables.
+
+### Voices
+
+With a speech command that can design and clone, which `howto-tts-audiocpp` can, you describe a narrator in plain words:
+
+```bash
+howto voice narrator "A calm, friendly man in his thirties with a clear American accent"
+```
+
+Listen to `~/.local/share/howto/voices/narrator.wav`, and run it again with `--replace` and other words until it is right. Then put `voice: narrator` at the top of a storyboard. [This video of a diagram editor](docs/media/diagc-explore.mp4) is narrated in such a voice.
+
+The voice is designed once, as a short clip, and every sentence is then a clone of that clip. Sending the description with each sentence does not work: the model invents a new speaker every time. A recording of a real speaker works as well: put a few seconds in `NAME.wav` and its words in `NAME.yaml` as `text: ...`.
+
+### The models have licences of their own
+
+`howto` is MIT, and it contains no model. Kokoro and Qwen3-TTS are Apache-2.0. Supertonic 3 is under an OpenRAIL-M licence with use restrictions. Read the licence of the model you choose.
 
 ## Commands
 
 | Command | What it does |
 |---|---|
+| `howto probe STORYBOARD` | Runs the steps with no recording and prints an outline of the page. `--until N`, `--within LOCATOR`, `--show` |
+| `howto render STORYBOARD` | Writes `NAME.mp4`, `NAME.srt` and `NAME.vtt` next to the storyboard. `--out DIR` |
+| `howto animate STORYBOARD` | Writes `NAME.gif` and `NAME.webp`, which loop without sound. `--format`, `--width N`, `--out DIR` |
+| `howto narrate STORYBOARD` | Speaks the narration only and writes `NAME.narration.wav` |
+| `howto voice NAME DESCRIPTION` | Makes a voice from a description. `howto voice` lists the voices, and `howto voice NAME` shows one |
 | `howto login PROFILE URL` | Opens a browser window for a person to sign in. The session stays in the profile |
-| `howto probe STORYBOARD` | Runs the steps with no recording and prints an outline of the page |
-| `howto narrate STORYBOARD` | Speaks the narration only |
-| `howto render STORYBOARD` | Writes the video and the subtitles next to the storyboard |
-| `howto animate STORYBOARD` | Writes a GIF and a WebP that loop without sound, next to the storyboard |
-| `howto voice NAME DESCRIPTION` | Makes a voice for the narration from a description. `howto voice` lists the voices, and `howto voice NAME` shows one |
 
-`skill/SKILL.md` is the reference for the storyboard format.
-
-## Zoom
-
-`zoom: 2` in a storyboard enlarges the picture around each control as it is used, and goes back to the whole page at the end of the step. `skill/SKILL.md` says how to write it.
-
-- **The page enlarges itself.** The zoom is a transform on `<body>` that the browser animates and then draws again at the new size, so the text stays sharp. The recorder gives no more pixels than the page has, so cutting a part out of the recording afterwards would only blur it.
-- **The pointer, the highlight and the note keep their size.** Playwright draws them outside `<body>`.
-- **A page with parts pinned to the window is not zoomed.** A transform makes the body the box that `position: fixed` elements are placed in. On a page whose body is the window, which is how most apps are built, nothing moves. On a page that scrolls as a whole, a pinned header or a dialog would jump. The tool measures every element before it enlarges anything, keeps the picture wide when one of them would move, and says so in a `note:` line of the probe.
-- **A probe zooms as well**, at once and with no waiting, so that it meets the page as the take will.
-
-## Marks
-
-Five actions draw on the picture instead of acting on the page: `box`, `circle`, `underline`, `arrow` and `spotlight`. Each names an element as `click` does. `skill/SKILL.md` says how to write them.
-
-- **A mark is an overlay of the recorder**, like the note: an SVG in screen pixels, outside `<body>`. A stroke appears as if drawn because a CSS animation uncovers it. The recorder removes scripts from an overlay, so nothing in a mark runs one.
-- **A mark goes around what the viewer sees of an element.** A locator by text often names a block as wide as the page while its words are not. An element that shows no box of its own (no background, border or shadow, and not a control or a picture) is therefore measured by what is in it.
-- **A mark does not move with the page.** Whatever moves the picture takes the marks away first: a scroll, and a zoom that has to go somewhere else. While a mark is shown and the next target is already in the picture, the picture holds still.
-- **A mark goes as a click, a key press or a choice from a list lands**, so that none is left on a page that no longer has its target, or in front of what the action changed. Marks that are still there at the end of a step's actions stay until the narration of the step ends.
-- **An arrow comes from the emptiest side.** There are eight candidates, the one that faces the middle of the picture first. The page is asked how many points of each lie on a control, a picture or text, and the lowest count wins.
-- **Marks fade through a custom property.** They are in a closed shadow root that the page cannot reach, but `--howto-marks` on `<html>` is inherited there, and the marks take their opacity from it.
-- **A probe draws nothing.** It looks for the element of each mark and scrolls to it, as the take will.
-
-Two details depend on the pinned Playwright release. Its stylesheet sets every `svg` in the overlay layer to a height of 0, so the marks carry their size as an inline style. And it wraps an overlay in an element that its own stylesheet does not position, so each mark brings a positioned box of its own.
-
-## Animated pictures
-
-`howto animate` performs a storyboard without narration and writes `NAME.gif` and `NAME.webp`. `--format` chooses one of them, and `--width` (960 by default) scales a wider picture down. `skill/SKILL.md` says how to write the storyboard.
-
-- **The take is silent.** No `tts` is needed and no title card is shown. A step lasts as long as its actions and its `pause`, and a note and the marks explain what happens.
-- **`crop` cuts the picture to one element.** A window of 1920 pixels scaled down to the width of a document has text of five pixels. A part of the window at its own size stays readable, which matters more than the file format. `howto render` ignores `crop`.
-- **The cut is known during the take, not made afterwards.** The recorder films the whole window and ffmpeg cuts the part out. The browser is told the part first, so that an arrow does not leave it and the notes go where the picture has them. A cut made later loses the note, which lies at the bottom of the window.
-- **The notes get a strip of their own.** A note laid on a small crop covers what it explains. So the notes are written in a dark strip under the crop, as tall as the longest of them needs, and the picture is the crop and the strip together. At the bottom of the window the strip goes above the crop. A crop as tall as the window leaves no room, and there the strip is the lowest part of the crop, shown only while a note is.
-- **An arrow is shorter in a small picture**: four tenths of the picture's shorter side, and 150 pixels at most.
-- **The crop is one fixed part of the window**, measured once after `setup`, with 12 pixels around the element. Its corner and its size are even numbers, because ffmpeg cuts a recording at even pixels only. A zoom moves the page under it, so a storyboard with both is refused.
-- **A probe reports the crop**, and names each action or mark whose element is outside it. The author is often a model that cannot look at the picture.
-- **Only the frames that differ are kept.** ffmpeg samples 12.5 frames a second and writes a frame when the picture changed, named by its number. The distance to the next number is the time the frame is shown, and both encoders are given that time. A GIF encoder that drops repeated frames itself loses the pause at the end of the loop, because its last frame has no successor to take a time from.
-- **The GIF has one palette and no dither.** Dither noise differs from frame to frame, so no frame repeats: a GIF of 2.6 MB was 1.9 MB without it, and 1.3 MB with the repeated frames dropped as well. The WebP is lossy and about three times smaller.
-- **The first 0.2 seconds of the recording are left out.** The recorder takes its first frame before its overlays are drawn, so the strip is missing from it, and the picture would flash at every loop.
-
-The pause was measured on a take of 9 seconds: with ffmpeg dropping the repeated frames, the GIF played for 6.9 seconds.
-
-## Voices
-
-A storyboard with `voice: NAME` is narrated in that voice. Without it, the speech command speaks in its own.
-
-```bash
-howto voice narrator "A calm, friendly man in his thirties with a clear American accent"
-mpv ~/.local/share/howto/voices/narrator.wav      # listen, and make it again until it is right
-howto voice narrator "A warmer and slower voice, a little older" --replace
-```
-
-- **A voice is a clip and the words in it**: `NAME.wav` and `NAME.yaml` in `~/.local/share/howto/voices`. The clip says two sentences of a video, or the words of `--text`.
-- **The voice is made once and cloned after that.** The speech command gets `--design DESCRIPTION` for the clip, and `--clone CLIP --clone-text WORDS` for every sentence of a video. Asking for the description again for each sentence does not work: a speech model that takes descriptions invents a speaker each time. Measured with Qwen3-TTS and a speaker-recognition model, where 1.0 is one speaker and two unrelated voices score 0.0 to 0.4: sentences designed one by one scored 0.10 to 0.44 against each other, and sentences cloned from one clip 0.64 to 0.84.
-- **The voice is part of a clip's cache name**, as a hash of the clip and its words. A new voice speaks every sentence again, and going back to an earlier one speaks nothing.
-- **`--replace` makes a voice anew.** Without it an existing voice stays, because every video that names it would speak differently.
-- **A recording works too.** Put a few seconds of someone speaking in `NAME.wav` and the words in `NAME.yaml` as `text: ...`.
-- **`howto animate` and `howto probe` do not need the voice.** Nothing is spoken in either.
-
-## Stopping a run
-
-Ctrl+C stops a probe, a render or an animation, runs the storyboard's `cleanup`, and exits with 130. The signal is acted on between browser calls, so the stop can take as long as one action's timeout.
-
-A termination signal (SIGTERM) does the same when it is sent to `howto` alone. Sent to the whole process group, as a shell's time limit often does, it also reaches Playwright, which closes the browser at once: the run still ends with 130 and leaves no files behind, but `cleanup` cannot run. Run `howto probe` on the storyboard afterwards, because a probe ends with `cleanup`.
+Exit codes: 0 for success, 1 for a step, the narration or the assembly that failed, 2 for a storyboard or a command line that is wrong, and 130 for a run that was stopped.
 
 ## Environment variables
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `HOWTO_TTS` | `tts` | The speech command |
-| `HOWTO_FFMPEG`, `HOWTO_FFPROBE` | linuxbrew, then `PATH` | The ffmpeg programs |
-| `HOWTO_IMG2WEBP` | linuxbrew, then `PATH` | The program that writes an animated WebP |
+| `HOWTO_TTS` | `tts` | The speech command, with its options |
+| `HOWTO_FFMPEG`, `HOWTO_FFPROBE` | Homebrew on Linux, then `PATH` | The ffmpeg programs |
+| `HOWTO_IMG2WEBP` | Homebrew on Linux, then `PATH` | The program that writes an animated WebP |
 | `HOWTO_ACTION_TIMEOUT` | `10` | Seconds an element gets to appear |
-| `HOWTO_DATA_DIR` | `~/.local/share/howto` | Browser profiles and voices |
+| `HOWTO_DATA_DIR` | `~/.local/share/howto` | Browser profiles, voices and Kokoro's models |
 | `HOWTO_CACHE_DIR` | `~/.cache/howto` | Spoken clips and intermediate files |
+
+## More
+
+- [docs/guide.md](docs/guide.md): how to make a video and a picture, how to choose a voice, and the things that surprise.
+- [docs/internals.md](docs/internals.md): how the zoom, the marks, the pictures and the voices work, and why.
+- [skill/SKILL.md](skill/SKILL.md): the storyboard format, written for an agent.
 
 ## Tests
 
 ```bash
-uv run --extra test pytest        # unit tests, and browser tests when Chromium is installed
-bash install.test.sh              # the installer, in a sandbox
+uv run --extra test playwright install chromium   # once
+uv run --extra test pytest                        # unit tests and browser tests
+bash install.test.sh                              # the installer, in a sandbox
 ```
 
-The browser tests need `uv run playwright install chromium` once. Without Chromium they are skipped, which is not a pass.
+Without Chromium the browser tests are skipped, which is not a pass.
 
-## Layout
+## Licence
 
-| Path | Content |
-|---|---|
-| `src/howto/storyboard.py` | The storyboard format and its validation |
-| `src/howto/narrate.py` | One cached clip per sentence |
-| `src/howto/voices.py` | The voices: a clip to clone and the words in it |
-| `src/howto/timeline.py` | The timing arithmetic |
-| `src/howto/runner.py` | Setup, steps and cleanup, for a probe or a take |
-| `src/howto/capture.py` | The Playwright browser. The only module that imports Playwright |
-| `src/howto/zoom.py` | Which part of the page a zoom shows, and which part a crop cuts out |
-| `src/howto/marks.py` | Where each mark is drawn, and its SVG |
-| `src/howto/probe.py` | The probe report |
-| `src/howto/assemble.py` | The narration track, ffmpeg and the subtitles |
-| `src/howto/animation.py` | The GIF and the WebP of an animated picture |
-| `src/howto/cli.py` | The commands |
-| `spike/` | The measurements made before the build |
+[MIT](LICENSE).

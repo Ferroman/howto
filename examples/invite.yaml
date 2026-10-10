@@ -1,0 +1,26 @@
+# A narrated video of the demo page in examples/site.
+#
+#   python3 -m http.server 8000 --directory examples/site
+#   howto render examples/invite.yaml
+#
+# The window is smaller than the default of 1920x1080, so that the controls
+# of this small page are easy to read without a zoom.
+title: Invite a teammate
+url: http://localhost:8000/
+viewport: 1280x720
+setup:
+  - wait_for: {role: heading, name: Home}
+steps:
+  - chapter: Invite a teammate
+  - say: Open Settings, where the members of the workspace are managed.
+    do:
+      - click: {role: button, name: Settings}
+  - say: Type your teammate's email address, and choose a role.
+    do:
+      - fill: {label: Email address, value: sam@example.com}
+      - select: {label: Role, option: Admin}
+  - say: Then press Invite. Your teammate appears in the list of members.
+    do:
+      - arrow: {role: button, name: Invite, note: Sends the invitation}
+      - click: {role: button, name: Invite}
+    pause: 1

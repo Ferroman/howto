@@ -16,13 +16,15 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
+from howto.tools import find_tool
+
 WIDTH, HEIGHT = 1920, 1080
 SECONDS = 120
 FLASHES = [5, 20, 40, 60, 80, 100, 115]
 FLASH_LENGTH = 0.4
 RATE = 25
 LIMIT = 0.25
-FFMPEG = "/home/linuxbrew/.linuxbrew/bin/ffmpeg"
+FFMPEG = find_tool("ffmpeg", "HOWTO_FFMPEG")
 
 
 def record(video: Path) -> None:

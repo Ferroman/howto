@@ -3,3 +3,11 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 spike-out/
+
+# What the quick start writes next to the example storyboards.
+examples/*.gif
+examples/*.webp
+examples/*.mp4
+examples/*.srt
+examples/*.vtt
+examples/*.wav

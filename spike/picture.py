@@ -17,9 +17,11 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
+from howto.tools import find_tool
+
 WIDTH, HEIGHT, SECONDS = 1920, 1080, 60
-FFMPEG = "/home/linuxbrew/.linuxbrew/bin/ffmpeg"
-FFPROBE = "/home/linuxbrew/.linuxbrew/bin/ffprobe"
+FFMPEG = find_tool("ffmpeg", "HOWTO_FFMPEG")
+FFPROBE = find_tool("ffprobe", "HOWTO_FFPROBE")
 # show_actions also labels every action with its locator ("Click
 # get_by_role(...)"), and has no option to turn the label off. An overlay may
 # carry a style element, and this rule hides the label's element.
