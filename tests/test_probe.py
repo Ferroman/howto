@@ -1,5 +1,6 @@
 from howto.probe import cut_outline, format_report
 from howto.runner import PageReport, RunResult, StepResult
+from howto.zoom import Box
 
 PAGE = PageReport(
     url="https://app.example.com/settings",
@@ -83,3 +84,8 @@ def test_notes_about_what_the_steps_did_not_handle_come_before_the_page():
         "outline:\n"
         "- main\n"
     )
+
+
+def test_the_crop_comes_first_with_its_size_and_its_place():
+    result = RunResult(steps=(StepResult(1, True, "press Enter"),), crop=Box(1588, 68, 332, 243), page=PAGE)
+    assert format_report(result).startswith("crop: 332 x 243 pixels at 1588, 68\nstep 1 ok      press Enter\n")

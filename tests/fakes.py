@@ -4,6 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from howto.runner import PageReport, StepFailed
+from howto.zoom import Box
 
 
 class FakeClock:
@@ -24,6 +25,9 @@ class FakeClock:
 
 class FakeStage:
     """Records every call. `fail_on` maps an action description to a reason."""
+
+    # What `crop_to` measures, whatever element it is asked for.
+    CROP_BOX = Box(100, 50, 340, 250)
 
     def __init__(
         self,
@@ -93,6 +97,13 @@ class FakeStage:
         self.calls.append("clear_marks" if animate else "clear_marks at once")
         if animate:
             self._spend(self.clear_seconds)
+
+    def crop_to(self, action) -> Box:
+        described = action.describe()
+        self.calls.append(described)
+        if described in self.fail_on:
+            raise StepFailed(f"{described}: {self.fail_on[described]}")
+        return self.CROP_BOX
 
     def start_recording(self, path) -> None:
         self.calls.append("start_recording")

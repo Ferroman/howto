@@ -20,6 +20,9 @@ def cut_outline(outline: str, max_chars: int) -> tuple[str, int]:
 
 def format_report(result: RunResult) -> str:
     lines = []
+    if result.crop is not None:
+        cut = result.crop
+        lines.append(f"crop: {cut.width:g} x {cut.height:g} pixels at {cut.x:g}, {cut.y:g}")
     for step in result.steps:
         label = "setup " if step.index == 0 else f"step {step.index}"
         if step.ok:

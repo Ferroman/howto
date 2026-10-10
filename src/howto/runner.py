@@ -19,6 +19,7 @@ from typing import Iterator, Mapping, Protocol, Sequence
 from .narrate import Clip
 from .storyboard import MARK_ACTIONS, Action, Locator, Pace, Step, Storyboard
 from .timeline import StepTime, narration_length, place_clips, step_hold
+from .zoom import Box
 
 
 class StepFailed(Exception):
@@ -52,6 +53,7 @@ class Stage(Protocol):
     def zoom_out(self, animate: bool) -> None: ...
     def mark(self, action: Action, draw: bool) -> None: ...
     def clear_marks(self, animate: bool) -> None: ...
+    def crop_to(self, action: Action) -> Box: ...
     def start_recording(self, path: Path) -> None: ...
     def stop_recording(self) -> None: ...
     def show_chapter(self, title: str, seconds: float) -> None: ...
@@ -138,6 +140,8 @@ class RunResult:
     warnings: tuple[str, ...] = ()
     timeline: tuple[StepTime, ...] = ()
     page: PageReport | None = None
+    # The part of the window that the picture is cut to. None is the whole window.
+    crop: Box | None = None
 
     @property
     def failed(self) -> StepResult | None:
@@ -167,6 +171,20 @@ def _cleanup(storyboard: Storyboard, stage: Stage) -> tuple[str, ...]:
         except StepFailed as exc:
             warnings.append(f"cleanup[{number}]: {exc}")
     return tuple(warnings)
+
+
+def _crop(storyboard: Storyboard, stage: Stage) -> tuple[Box | None, StepResult | None]:
+    """Has the stage measure the storyboard's `crop`, on the page as setup left it.
+
+    A crop that cannot be found is reported as a failed setup: no step has run yet.
+    """
+    if storyboard.crop is None:
+        return None, None
+    action = Action(kind="crop", locator=storyboard.crop)
+    try:
+        return stage.crop_to(action), None
+    except StepFailed as exc:
+        return None, StepResult(0, False, action.describe(), str(exc))
 
 
 def _factor(step: Step, storyboard: Storyboard) -> float:
@@ -263,8 +281,15 @@ def run_probe(
     results: list[StepResult] = []
     page = None
     warnings: tuple[str, ...] = ()
+    crop = None
     try:
-        for step in storyboard.steps[:until]:
+        crop, failure = _crop(storyboard, stage)
+        steps = storyboard.steps[:until]
+        if failure:
+            # No step runs on a page whose crop is missing. The page is still described.
+            results.append(failure)
+            steps = ()
+        for step in steps:
             picture = _Picture(stage)
             try:
                 _act(step, stage, picture, storyboard.pace, _factor(step, storyboard))
@@ -279,13 +304,15 @@ def run_probe(
         page = stage.report(within, max_chars)
     finally:
         warnings = _cleanup(storyboard, stage)
-    return RunResult(steps=tuple(results), warnings=warnings, page=page)
+    return RunResult(steps=tuple(results), warnings=warnings, page=page, crop=crop)
 
 
-def _play(step: Step, stage: Stage, picture: _Picture, clock: Clock, pace: Pace, factor: float) -> None:
+def _play(
+    step: Step, stage: Stage, picture: _Picture, clock: Clock, pace: Pace, factor: float, cards: bool
+) -> None:
     if step.note:
         stage.show_note(step.note)
-    if step.chapter:
+    if step.chapter and cards:
         shown = clock.now()
         stage.show_chapter(step.chapter, pace.chapter_hold)
         # show_chapter may or may not wait for the card itself; hold for the rest.
@@ -301,8 +328,17 @@ def run_take(
     clips: Mapping[int, Sequence[Clip]],
     clock: Clock,
     video: Path,
+    *,
+    animated: bool = False,
 ) -> RunResult:
-    """Records the steps, paced by the narration, and returns the timeline."""
+    """Records the steps, paced by the narration, and returns the timeline.
+
+    An `animated` take is for a picture that loops without sound. The caller
+    gives it no clips, so each step lasts as long as its actions and its
+    pause. No title card is shown, and the stage is told which part of the
+    window the storyboard's `crop` names, because the notes and the arrows
+    must be placed inside it. A narrated take films the whole window.
+    """
     failure = _setup(storyboard, stage)
     if failure:
         return RunResult(steps=(failure,))
@@ -311,16 +347,25 @@ def run_take(
     times: list[StepTime] = []
     warnings: tuple[str, ...] = ()
     recording = False
+    crop = None
     try:
-        stage.start_recording(video)
-        recording = True
+        if animated:
+            crop, failure = _crop(storyboard, stage)
+        steps = storyboard.steps
+        if failure:
+            # Nothing is recorded. Setup completed, so cleanup still runs.
+            results.append(failure)
+            steps = ()
+        else:
+            stage.start_recording(video)
+            recording = True
         zero = clock.now()
-        for step in storyboard.steps:
+        for step in steps:
             start = clock.now() - zero
             step_clips = tuple(clips.get(step.index, ()))
             picture = _Picture(stage)
             try:
-                _play(step, stage, picture, clock, pace, _factor(step, storyboard))
+                _play(step, stage, picture, clock, pace, _factor(step, storyboard), cards=not animated)
                 narration = narration_length([clip.duration for clip in step_clips], pace.sentence_gap)
                 elapsed = clock.now() - zero - start
                 hold = step_hold(elapsed=elapsed, narration=narration, gap=pace.gap, pause=step.pause)
@@ -352,4 +397,4 @@ def run_take(
                 stage.stop_recording()
         finally:
             warnings = _cleanup(storyboard, stage)
-    return RunResult(steps=tuple(results), warnings=warnings, timeline=tuple(times))
+    return RunResult(steps=tuple(results), warnings=warnings, timeline=tuple(times), crop=crop)

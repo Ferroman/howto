@@ -16,6 +16,8 @@ CLICK_B = 'click role=button name="B"'
 CLICK_C = 'click role=button name="C"'
 SETUP = 'wait_for role=heading name="Home"'
 CLEANUP = 'click role=button name="Undo"'
+PANEL = {"role": "complementary", "name": "Panel"}
+CROP = 'crop role=complementary name="Panel"'
 
 
 def click(name):
@@ -34,6 +36,14 @@ def take(tmp_path, steps, clips=None, stage_options=None, **extra):
     clock = FakeClock()
     stage = FakeStage(clock, **(stage_options or {}))
     result = run_take(board(tmp_path, steps, **extra), stage, clips or {}, clock, tmp_path / "capture.webm")
+    return result, stage, clock
+
+
+def picture(tmp_path, steps, stage_options=None, **extra):
+    """A take for an animated picture: nothing is spoken."""
+    clock = FakeClock()
+    stage = FakeStage(clock, **(stage_options or {}))
+    result = run_take(board(tmp_path, steps, **extra), stage, {}, clock, tmp_path / "capture.webm", animated=True)
     return result, stage, clock
 
 
@@ -484,3 +494,53 @@ def test_a_probe_names_a_mark_whose_element_is_missing(tmp_path):
     stage = FakeStage(fail_on={CIRCLE_A: "2 elements match"})
     result = run_probe(board(tmp_path, [{"do": [circle("A"), click("A")]}]), stage)
     assert (result.failed.index, result.failed.error) == (1, f"{CIRCLE_A}: 2 elements match")
+
+
+def test_an_animated_take_shows_no_title_card(tmp_path):
+    result, stage, _ = picture(tmp_path, [{"chapter": "Invite", "say": "Words.", "do": [click("A")]}])
+    assert stage.calls == ["start_recording", CLICK_A, "stop_recording"]
+    # Lead 0.5 + gap 0.4. The two seconds of the card are not waited for either.
+    assert result.timeline[0].end == pytest.approx(0.9)
+
+
+def test_an_animated_take_is_cut_to_the_crop_as_setup_leaves_the_page(tmp_path):
+    extra = {"setup": [{"wait_for": {"role": "heading", "name": "Home"}}], "crop": PANEL}
+    result, stage, _ = picture(tmp_path, [{"do": [click("A")]}], **extra)
+    assert stage.calls == [SETUP, CROP, "start_recording", CLICK_A, "stop_recording"]
+    assert result.crop == FakeStage.CROP_BOX
+
+
+def test_an_animated_take_without_a_crop_shows_the_whole_window(tmp_path):
+    result, stage, _ = picture(tmp_path, [{"do": [click("A")]}])
+    assert stage.calls == ["start_recording", CLICK_A, "stop_recording"]
+    assert result.crop is None
+
+
+def test_a_narrated_take_films_the_whole_window_whatever_crop_says(tmp_path):
+    result, stage, _ = take(tmp_path, [{"do": [click("A")]}], crop=PANEL)
+    assert stage.calls == ["start_recording", CLICK_A, "stop_recording"]
+    assert result.crop is None
+
+
+def test_a_crop_that_is_not_found_fails_before_the_recording_and_still_cleans_up(tmp_path):
+    options = {"fail_on": {CROP: "0 elements match"}}
+    result, stage, _ = picture(tmp_path, [{"do": [click("A")]}], options, crop=PANEL, cleanup=[click("Undo")])
+    # Setup completed, so whatever it changed is undone.
+    assert stage.calls == [CROP, CLEANUP]
+    assert (result.failed.index, result.failed.error) == (0, f"{CROP}: 0 elements match")
+    assert result.timeline == ()
+
+
+def test_a_probe_measures_the_crop_before_the_steps(tmp_path):
+    stage = FakeStage()
+    result = run_probe(board(tmp_path, [{"do": [click("A")]}], crop=PANEL), stage)
+    assert stage.calls == [CROP, CLICK_A, "report"]
+    assert result.crop == FakeStage.CROP_BOX
+
+
+def test_a_probe_with_a_crop_that_is_not_found_runs_no_step_and_reports_the_page(tmp_path):
+    stage = FakeStage(fail_on={CROP: "2 elements match"})
+    result = run_probe(board(tmp_path, [{"do": [click("A")]}], crop=PANEL, cleanup=[click("Undo")]), stage)
+    assert stage.calls == [CROP, "report", CLEANUP]
+    assert (result.failed.index, result.failed.error) == (0, f"{CROP}: 2 elements match")
+    assert result.crop is None
