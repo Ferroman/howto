@@ -60,9 +60,16 @@ def test_a_tts_that_writes_nothing_is_an_error(fakes):
         speak("Hello.", cache_dir=fakes.sandbox.clips, command="true", ffmpeg=fakes.ffmpeg)
 
 
-def test_a_missing_tts_is_reported(fakes):
-    with pytest.raises(RunError, match="command not found"):
+def test_a_missing_speech_command_says_how_to_get_one(fakes):
+    with pytest.raises(RunError, match=r"`/nonexistent/tts`.*HOWTO_TTS.*howto-tts-kokoro.*README"):
         speak("Hello.", cache_dir=fakes.sandbox.clips, command="/nonexistent/tts", ffmpeg=fakes.ffmpeg)
+    assert not fakes.sandbox.clips.exists() or list(fakes.sandbox.clips.iterdir()) == []
+
+
+def test_a_speech_command_that_cannot_be_read_is_reported(fakes):
+    # An opening quote with no end: the shell rules that split the command refuse it.
+    with pytest.raises(RunError, match="HOWTO_TTS.*quotation"):
+        speak("Hello.", cache_dir=fakes.sandbox.clips, command='tts --voice "amy', ffmpeg=fakes.ffmpeg)
 
 
 def test_tts_command_default_and_override(monkeypatch):

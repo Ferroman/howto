@@ -15,6 +15,9 @@ test = ["pytest>=8"]
 
 [project.scripts]
 howto = "howto.cli:main"
+# The speech commands that HOWTO_TTS can name. See src/howto/speech/__init__.py.
+howto-tts-audiocpp = "howto.speech.audiocpp:main"
+howto-tts-kokoro = "howto.speech.kokoro:main"
 
 [build-system]
 requires = ["hatchling"]

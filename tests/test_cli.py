@@ -193,6 +193,16 @@ def test_a_tts_failure_stops_before_the_browser(browser, tmp_path, monkeypatch, 
     assert "told to fail" in capsys.readouterr().err
 
 
+def test_a_render_without_a_speech_command_stops_before_the_browser(browser, tmp_path, monkeypatch, capsys):
+    # What a new machine has: no `tts`, and nothing in HOWTO_TTS.
+    monkeypatch.delenv("HOWTO_TTS")
+    monkeypatch.setenv("PATH", str(tmp_path / "empty"))
+    assert cli.main(["render", str(write_board(tmp_path))]) == 1
+    assert browser.opened == 0
+    err = capsys.readouterr().err
+    assert "`tts`" in err and "HOWTO_TTS" in err and "README" in err
+
+
 def test_a_failed_setup_suggests_signing_in(browser, tmp_path, capsys):
     path = write_board(tmp_path, profile="demo", setup=[{"wait_for": {"role": "heading", "name": "Home"}}])
     browser.options = {"fail_on": {SETUP: "0 elements match"}}

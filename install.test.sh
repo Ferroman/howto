@@ -20,7 +20,7 @@ cat > "$SANDBOX/bin/uv" <<'EOF'
 echo "uv $*" >> "$LOG"
 if [ "$1" = venv ]; then
   mkdir -p "$2/bin"
-  for name in python howto playwright; do
+  for name in python howto howto-tts-audiocpp howto-tts-kokoro playwright; do
     printf '#!/usr/bin/env bash\necho "%s $*" >> "$LOG"\n' "$name" > "$2/bin/$name"
     chmod +x "$2/bin/$name"
   done
@@ -35,7 +35,18 @@ VENV="$HOME/.local/share/howto/venv"
 run() { out="$(bash "$REPO/install.sh" 2>&1)"; rc=$?; }
 calls() { grep -c -- "$1" "$LOG" 2>/dev/null || true; }
 
+# --- a machine without Claude Code -------------------------------------------
+# ~/.claude belongs to another program. The installer links the skill into it
+# and does not make it.
+run
+assert "a run without Claude Code succeeds" '[ "$rc" = 0 ]'
+assert "no folder is made for Claude Code" '[ ! -e "$HOME/.claude" ]'
+assert "the message says where the skill is" '[[ "$out" == *"$REPO/skill/SKILL.md"* ]]'
+assert "the command is linked all the same" '[ "$(readlink "$HOME/.local/bin/howto")" = "$VENV/bin/howto" ]'
+rm -rf "$HOME/.local" "$LOG"
+
 # --- a first install ----------------------------------------------------------
+mkdir "$HOME/.claude"
 run
 assert "first run succeeds" '[ "$rc" = 0 ]'
 assert "the environment is built on a uv-managed Python 3.13" \
@@ -46,6 +57,10 @@ assert "Chromium is downloaded" 'grep -qx "playwright install chromium" "$LOG"'
 assert "the command is linked" '[ "$(readlink "$HOME/.local/bin/howto")" = "$VENV/bin/howto" ]'
 assert "the skill is linked for Claude Code" \
   '[ "$(readlink "$HOME/.claude/skills/howto-video")" = "$REPO/skill" ]'
+# HOWTO_TTS names a speech command by its name, so both have to be on PATH.
+for name in howto-tts-audiocpp howto-tts-kokoro; do
+  assert "the speech command $name is linked" '[ "$(readlink "$HOME/.local/bin/$name")" = "$VENV/bin/$name" ]'
+done
 
 # --- a second run, on a machine with pi --------------------------------------
 # pi loads ~/.claude/skills through its settings, and it skips whatever an

@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import os
 import shlex
+import shutil
 import wave
 from dataclasses import dataclass
 from pathlib import Path
@@ -38,6 +39,20 @@ def tts_command() -> str:
     return os.environ.get("HOWTO_TTS") or "tts"
 
 
+def speech_argv(command: str) -> list[str]:
+    """The speech command as a list of arguments. One that cannot be run is an error that says how to get one."""
+    try:
+        argv = shlex.split(command)
+    except ValueError as exc:
+        raise RunError(f"HOWTO_TTS: the speech command {command!r} cannot be read: {exc}") from None
+    if not argv or shutil.which(argv[0]) is None:
+        raise RunError(
+            f"no speech command: `{argv[0] if argv else command}` was not found. Set HOWTO_TTS to a command "
+            "that speaks, for example `howto-tts-kokoro`. See the README, section Speech"
+        )
+    return argv
+
+
 def clip_key(command: str, language: str, text: str, voice: str = "") -> str:
     # Without a voice the name is what it was before voices existed, so earlier clips stay valid.
     parts = (command, language, text, voice) if voice else (command, language, text)
@@ -53,17 +68,18 @@ def wav_duration(path: Path) -> float:
 
 
 def speak(text: str, *, cache_dir: Path, command: str, ffmpeg: str, voice: Voice | None = None) -> Clip:
-    cache_dir.mkdir(parents=True, exist_ok=True)
     key = clip_key(command, LANGUAGE, text, voice.key if voice else "")
     # The voice is cloned from its clip. Asking for its description again
     # would give another speaker for every sentence.
     cloned = ["--clone", str(voice.clip), "--clone-text", voice.text] if voice else []
     final = cache_dir / f"{key}.wav"
     if not final.exists():
+        argv = speech_argv(command)
+        cache_dir.mkdir(parents=True, exist_ok=True)
         raw = cache_dir / f".{key}.raw.wav"
         part = cache_dir / f".{key}.part.wav"
         try:
-            run([*shlex.split(command), "-l", LANGUAGE, "-o", str(raw), *cloned, text], "tts")
+            run([*argv, "-l", LANGUAGE, "-o", str(raw), *cloned, text], "tts")
             if not raw.exists() or raw.stat().st_size == 0:
                 raise RunError(f"tts wrote no audio for: {text!r}")
             run(

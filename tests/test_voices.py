@@ -96,6 +96,12 @@ def test_a_failed_replacement_keeps_the_earlier_voice(fakes, monkeypatch):
     assert sorted(p.name for p in fakes.sandbox.voices.iterdir()) == ["narrator.wav", "narrator.yaml"]
 
 
+def test_a_missing_speech_command_says_how_to_get_one(fakes):
+    with pytest.raises(RunError, match=r"`/nonexistent/tts`.*HOWTO_TTS.*README"):
+        voices.design("narrator", CALM, directory=fakes.sandbox.voices, command="/nonexistent/tts")
+    assert not fakes.sandbox.voices.exists() or list(fakes.sandbox.voices.iterdir()) == []
+
+
 def test_a_speech_command_that_writes_nothing_is_an_error(fakes, monkeypatch):
     monkeypatch.setenv("FAKE_TTS_SILENT", "1")
     with pytest.raises(RunError, match="wrote no audio"):

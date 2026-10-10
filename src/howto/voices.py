@@ -13,14 +13,13 @@ from __future__ import annotations
 
 import hashlib
 import os
-import shlex
 from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
 
 from .errors import RunError
-from .narrate import LANGUAGE, wav_duration
+from .narrate import LANGUAGE, speech_argv, wav_duration
 from .storyboard import read_yaml
 from .tools import run
 
@@ -86,11 +85,12 @@ def design(
         raise RunError(
             f"voice `{name}` exists. `--replace` makes it anew, and every video that names it then speaks differently"
         )
+    argv = speech_argv(command)
     directory.mkdir(parents=True, exist_ok=True)
     new_clip = directory / f".{name}.part.wav"
     new_note = directory / f".{name}.part.yaml"
     try:
-        run([*shlex.split(command), "-l", LANGUAGE, "-o", str(new_clip), "--design", description, text], "tts")
+        run([*argv, "-l", LANGUAGE, "-o", str(new_clip), "--design", description, text], "tts")
         if not new_clip.exists() or new_clip.stat().st_size == 0:
             raise RunError(f"tts wrote no audio for the voice `{name}`")
         if wav_duration(new_clip) <= 0:
