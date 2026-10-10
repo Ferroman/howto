@@ -151,6 +151,28 @@ def test_pace_carries_the_time_a_zoom_is_held():
     assert parse(board(pace={"zoom_hold": "0.3"}), Path("demo.yaml")).pace.zoom_hold == 0.3
 
 
+@pytest.mark.parametrize("kind", ["box", "circle", "underline", "spotlight", "arrow"])
+def test_a_mark_names_its_element_as_a_click_does(kind):
+    do = [{kind: {"role": "button", "name": "Invite", "within": {"role": "dialog"}}}]
+    (action,) = parse(one_step({"do": do}), Path("demo.yaml")).steps[0].do
+    assert (action.kind, action.value) == (kind, None)
+    assert action.locator.name == "Invite"
+    assert action.describe() == f'{kind} role=button name="Invite" within(role=dialog)'
+
+
+def test_an_arrow_can_carry_a_few_words():
+    # `text` is already a way to name the element, so the words have a key of their own.
+    do = [{"arrow": {"text": "Invitations", "note": "Everyone you invited"}}]
+    (action,) = parse(one_step({"do": do}), Path("demo.yaml")).steps[0].do
+    assert (action.locator.text, action.value) == ("Invitations", "Everyone you invited")
+    assert action.describe() == 'arrow text="Invitations" note="Everyone you invited"'
+
+
+def test_pace_carries_the_time_a_mark_is_held():
+    assert Pace().mark_hold == 0.6
+    assert parse(board(pace={"mark_hold": "1.5"}), Path("demo.yaml")).pace.mark_hold == 1.5
+
+
 @pytest.mark.parametrize(
     "data, fragment",
     [
@@ -189,6 +211,12 @@ def test_pace_carries_the_time_a_zoom_is_held():
         (board(zoom=True), "`zoom` must be a number from 1 to 4"),
         (one_step({"say": "Hi.", "zoom": "0"}), "step 1: `zoom` must be a number from 1 to 4"),
         (one_step({"say": "Hi.", "zoom": {"factor": 2}}), "step 1: `zoom` must be a number from 1 to 4"),
+        (one_step({"do": [{"circle": {"name": "Save"}}]}), "step 1: `do[1]`: `circle`: a locator needs exactly one of"),
+        (one_step({"do": [{"arrow": "Save"}]}), "step 1: `do[1]`: `arrow`: a locator must be a mapping"),
+        (one_step({"do": [{"box": {"label": "x", "note": "Here"}}]}), "step 1: `do[1]`: `box`: only `arrow` takes a `note`"),
+        (one_step({"do": [{"arrow": {"label": "x", "note": " "}}]}), "step 1: `do[1]`: `arrow`: `note`: must be non-empty text"),
+        (board(setup=[{"circle": {"label": "x"}}]), "`setup[1]`: `circle` draws on the picture, and `setup` is not recorded"),
+        (board(cleanup=[{"arrow": {"label": "x"}}]), "`cleanup[1]`: `arrow` draws on the picture, and `cleanup` is not recorded"),
     ],
 )
 def test_invalid_storyboards_name_the_problem(data, fragment):

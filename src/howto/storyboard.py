@@ -20,6 +20,10 @@ LOCATOR_EXTRAS = ("name", "exact", "nth", "within")
 LOCATOR_ACTIONS = ("click", "hover", "scroll_to", "wait_for")
 VALUE_ACTIONS = {"fill": "value", "select": "option"}
 STRING_ACTIONS = ("goto", "press")
+# Marks: drawn on the picture around an element, or beside it. They touch nothing on the page.
+MARK_ACTIONS = ("box", "circle", "underline", "spotlight", "arrow")
+# The marks that can show a few words. `text` already names an element, so the key is `note`.
+NOTED_MARKS = ("arrow",)
 TOP_FIELDS = ("title", "url", "steps", "profile", "viewport", "setup", "cleanup", "pace", "zoom")
 STEP_FIELDS = ("say", "do", "chapter", "note", "pause", "zoom")
 # How far the picture may be enlarged. At 4 a 1920-pixel page shows 480 pixels.
@@ -92,6 +96,8 @@ class Action:
         text = f"{self.kind} {self.locator.describe()}"
         if self.kind in VALUE_ACTIONS:
             text += f' {VALUE_ACTIONS[self.kind]}="{self.value}"'
+        elif self.kind in MARK_ACTIONS and self.value is not None:
+            text += f' note="{self.value}"'
         return text
 
 
@@ -116,6 +122,8 @@ class Pace:
     chapter_hold: float = 2.0
     # Seconds the picture stays enlarged after the last action of a step.
     zoom_hold: float = 0.9
+    # Seconds a finished mark is shown before the next action that is not a mark.
+    mark_hold: float = 0.6
 
 
 @dataclass(frozen=True)
@@ -231,6 +239,14 @@ def parse_action(data: object, where: str) -> Action:
             locator=parse_locator(rest, f"{where}: `{kind}`"),
             value=_text(argument[key], f"{where}: `{kind}`: `{key}`"),
         )
+    if kind in MARK_ACTIONS:
+        note = None
+        if isinstance(argument, dict) and "note" in argument:
+            if kind not in NOTED_MARKS:
+                raise StoryboardError(f"{where}: `{kind}`: only `arrow` takes a `note`")
+            note = _text(argument["note"], f"{where}: `{kind}`: `note`")
+            argument = {k: v for k, v in argument.items() if k != "note"}
+        return Action(kind=kind, locator=parse_locator(argument, f"{where}: `{kind}`"), value=note)
     raise StoryboardError(f"{where}: unknown action `{kind}`")
 
 
@@ -239,7 +255,14 @@ def _parse_actions(value: object, prefix: str, field: str) -> tuple[Action, ...]
         return ()
     if not isinstance(value, list):
         raise StoryboardError(f"{prefix}`{field}` must be a list of actions")
-    return tuple(parse_action(item, f"{prefix}`{field}[{n}]`") for n, item in enumerate(value, 1))
+    actions = tuple(parse_action(item, f"{prefix}`{field}[{n}]`") for n, item in enumerate(value, 1))
+    if field != "do":
+        for n, action in enumerate(actions, 1):
+            if action.kind in MARK_ACTIONS:
+                raise StoryboardError(
+                    f"{prefix}`{field}[{n}]`: `{action.kind}` draws on the picture, and `{field}` is not recorded"
+                )
+    return actions
 
 
 def _parse_say(value: object, where: str) -> tuple[str, ...]:
