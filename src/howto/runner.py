@@ -186,7 +186,11 @@ def run_take(
             times.append(StepTime(step.index, start, clock.now() - zero, place_clips(start, step_clips, pace.sentence_gap)))
             results.append(StepResult(step.index, True, summarize(step)))
     finally:
-        if recording:
-            stage.stop_recording()
-        warnings = _cleanup(storyboard, stage)
+        # Cleanup has its own `finally`: a recording that cannot be stopped
+        # must not leave the data as the steps changed it.
+        try:
+            if recording:
+                stage.stop_recording()
+        finally:
+            warnings = _cleanup(storyboard, stage)
     return RunResult(steps=tuple(results), warnings=warnings, timeline=tuple(times))

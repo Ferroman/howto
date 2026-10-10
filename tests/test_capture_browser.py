@@ -190,3 +190,20 @@ def test_a_new_tab_is_noted(chromium, site_url, tmp_path):
     assert result.failed is None
     assert result.page.notices == (f"a new tab opened and the steps stay in the first one: {site_url}/done.html",)
     assert result.page.url == f"{site_url}/popups.html"
+
+
+def test_a_browser_that_goes_away_is_explained(chromium, site_url, tmp_path):
+    sb = board(tmp_path, f"{site_url}/index.html", [{"do": [SETTINGS]}])
+    with pytest.raises(RunError, match="the browser stopped: "):
+        with open_stage(sb, profiles_dir=tmp_path / "profiles") as stage:
+            stage.page.context.close()
+            stage.start_recording(tmp_path / "take.webm")
+
+
+def test_the_report_survives_a_page_that_is_gone(chromium, site_url, tmp_path):
+    sb = board(tmp_path, f"{site_url}/index.html", [{"do": [SETTINGS]}])
+    with open_stage(sb, profiles_dir=tmp_path / "profiles") as stage:
+        stage.page.close()
+        report = stage.report(None, 1000)
+    assert report.outline.startswith("(no outline: ")
+    assert report.title == ""

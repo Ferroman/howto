@@ -25,12 +25,15 @@ class FakeClock:
 class FakeStage:
     """Records every call. `fail_on` maps an action description to a reason."""
 
-    def __init__(self, clock=None, *, fail_on=None, interrupt_on=(), action_seconds=0.0, chapter_seconds=0.0):
+    def __init__(
+        self, clock=None, *, fail_on=None, interrupt_on=(), action_seconds=0.0, chapter_seconds=0.0, stop_error=None
+    ):
         self.clock = clock
         self.fail_on = dict(fail_on or {})
         self.interrupt_on = set(interrupt_on)
         self.action_seconds = action_seconds
         self.chapter_seconds = chapter_seconds
+        self.stop_error = stop_error
         self.calls: list[str] = []
         self.report_args = None
 
@@ -53,6 +56,8 @@ class FakeStage:
 
     def stop_recording(self) -> None:
         self.calls.append("stop_recording")
+        if self.stop_error is not None:
+            raise self.stop_error
 
     def show_chapter(self, title, seconds) -> None:
         self.calls.append(f"chapter {title}")

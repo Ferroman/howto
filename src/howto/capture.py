@@ -209,16 +209,20 @@ class PlaywrightStage:
             self._note = None
 
     def report(self, within: Locator | None, max_chars: int) -> PageReport:
+        # A page that crashed or was closed still gets a report, so that a
+        # probe can print which steps ran before it went away.
         scope = resolve(self.page, within) if within is not None else self.page.locator("body")
-        self.page.wait_for_timeout(SETTLE_MS)
         try:
+            self.page.wait_for_timeout(SETTLE_MS)
             outline = scope.first.aria_snapshot(timeout=self.timeout_ms)
         except PlaywrightError as exc:
             outline = f"(no outline: {_first_line(exc)})"
+        try:
+            title = self.page.title()
+        except PlaywrightError:
+            title = ""
         kept, omitted = cut_outline(outline, max_chars)
-        return PageReport(
-            url=self.page.url, title=self.page.title(), outline=kept, omitted=omitted, notices=self._notices()
-        )
+        return PageReport(url=self.page.url, title=title, outline=kept, omitted=omitted, notices=self._notices())
 
 
 @contextmanager
@@ -252,9 +256,17 @@ def open_stage(storyboard: Storyboard, *, profiles_dir: Path, headless: bool = T
                     page.goto(storyboard.url, timeout=timeout * 3000)
                 except PlaywrightError as exc:
                     raise RunError(f"cannot open {storyboard.url}: {_first_line(exc)}") from None
-                yield PlaywrightStage(page, storyboard.viewport, timeout)
+                try:
+                    yield PlaywrightStage(page, storyboard.viewport, timeout)
+                except PlaywrightError as exc:
+                    # An action that fails is a StepFailed. What arrives here is
+                    # the browser itself failing: it crashed, or it was closed.
+                    raise RunError(f"the browser stopped: {_first_line(exc)}") from None
             finally:
-                context.close()
+                try:
+                    context.close()
+                except PlaywrightError:
+                    pass  # it is already gone
 
 
 def login(profile_dir: Path, url: str) -> None:

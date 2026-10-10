@@ -161,3 +161,12 @@ def test_summaries(tmp_path):
     sb = board(tmp_path, [{"chapter": "Invite", "do": [click("A"), {"press": "Enter"}]}, {"say": "Only words."}])
     assert summarize(sb.steps[0]) == f'chapter "Invite"; {CLICK_A}; press Enter'
     assert summarize(sb.steps[1]) == "narration only"
+
+
+def test_cleanup_runs_even_when_the_recording_cannot_be_stopped(tmp_path):
+    clock = FakeClock()
+    stage = FakeStage(clock, stop_error=RuntimeError("the recorder is gone"))
+    sb = board(tmp_path, [{"do": [click("A")]}], cleanup=[click("Undo")])
+    with pytest.raises(RuntimeError, match="the recorder is gone"):
+        run_take(sb, stage, {}, clock, tmp_path / "capture.webm")
+    assert stage.calls == ["start_recording", CLICK_A, "stop_recording", CLEANUP]
