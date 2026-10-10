@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Demo - Pinned</title>
+<style>
+  /* A page that scrolls as a whole, with a button pinned to the corner of the
+     window. Enlarging the body would send that button to the end of the page. */
+  body { font: 16px sans-serif; }
+  #help { position: fixed; right: 24px; bottom: 24px; width: 120px; height: 40px; }
+  #spacer { height: 2400px; }
+</style></head>
+<body>
+<h1>Pinned</h1>
+<button type="button" onclick="document.title = 'Save was clicked'">Save</button>
+<button id="help" type="button" onclick="document.title = 'Help was clicked'">Help</button>
+<div id="spacer"></div>
+</body>
+</html>

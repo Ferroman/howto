@@ -21,7 +21,7 @@ def real_ffmpeg(monkeypatch):
         pytest.skip("ffmpeg is not installed")
 
 
-def write_board(tmp_path, site_url, *, settings="Settings", last="The invitation is on its way."):
+def write_board(tmp_path, site_url, *, settings="Settings", last="The invitation is on its way.", zoom=None):
     data = {
         "title": "Invite a teammate",
         "url": f"{site_url}/index.html",
@@ -40,6 +40,8 @@ def write_board(tmp_path, site_url, *, settings="Settings", last="The invitation
             {"say": last, "do": [{"wait_for": {"role": "heading", "name": "Invitation sent"}}]},
         ],
     }
+    if zoom is not None:
+        data["zoom"] = zoom
     path = tmp_path / "videos" / "demo.yaml"
     path.parent.mkdir(exist_ok=True)
     path.write_text(yaml.safe_dump(data), encoding="utf-8")
@@ -132,3 +134,21 @@ def test_a_video_ends_with_its_timeline(chromium, site_url, fake_tts, real_ffmpe
     (work,) = sandbox.work.iterdir()
     timeline = json.loads((work / "timeline.json").read_text())
     assert abs(float(json.loads(shown.stdout)["format"]["duration"]) - timeline["steps"][-1]["end"]) <= 0.5
+
+
+def test_a_storyboard_with_zoom_probes_and_renders(chromium, site_url, fake_tts, real_ffmpeg, sandbox, tmp_path, capsys):
+    _, ffprobe = real_ffmpeg
+    path = write_board(tmp_path, site_url, zoom=2)
+    assert cli.main(["probe", str(path)]) == 0
+    assert "step 4 ok" in capsys.readouterr().out
+    assert cli.main(["render", str(path), "--keep-work"]) == 0
+
+    shown = subprocess.run(
+        [ffprobe, "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(path.parent / "demo.mp4")],
+        capture_output=True, text=True, check=True,
+    )
+    (work,) = sandbox.work.iterdir()
+    steps = json.loads((work / "timeline.json").read_text())["steps"]
+    assert abs(float(shown.stdout) - steps[-1]["end"]) <= 0.5
+    # The second step holds one click: the way in, the hold and the way out make it longer than its narration.
+    assert steps[1]["end"] - steps[1]["start"] > 2.5

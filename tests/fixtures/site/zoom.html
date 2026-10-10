@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Demo - Zoom</title>
+<style>
+  /* An app that fills the window and scrolls inside itself. Every control sits
+     at a known place of a 1280x720 window, so a test can say where a zoom
+     must put it. The last button is below the first screen. */
+  html, body { height: 100%; margin: 0; }
+  body { font: 16px sans-serif; }
+  #app { position: absolute; inset: 0; overflow: auto; }
+  button { position: absolute; width: 120px; height: 40px; }
+  #centre { left: 580px; top: 340px; }
+  #corner { left: 1140px; top: 660px; }
+  #below { left: 40px; top: 1500px; }
+  #red { position: absolute; left: 600px; top: 300px; width: 80px; height: 30px; background: #d00; }
+</style></head>
+<body style="color: rgb(34, 34, 34);">
+<div id="app">
+<h1>Zoom</h1>
+<div id="red"></div>
+<button id="centre" type="button" onclick="document.title = 'Centre was clicked'">Centre</button>
+<button id="corner" type="button" onclick="document.title = 'Corner was clicked'">Corner</button>
+<button id="below" type="button" onclick="document.title = 'Below was clicked'">Below</button>
+</div>
+</body>
+</html>

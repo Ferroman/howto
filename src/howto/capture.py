@@ -16,6 +16,7 @@ from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page, sync_playwright
 from playwright.sync_api import TimeoutError as PlaywrightTimeout
 
+from . import zoom
 from .errors import RunError
 from .probe import cut_outline
 from .runner import Interrupt, PageReport, StepFailed
@@ -37,6 +38,81 @@ NOTE_STYLE = (
 # that holds the label. The element's name is Playwright's own: check it when
 # the pinned version changes.
 HIDE_ACTION_LABEL = "<style>x-pw-title{display:none!important}</style>"
+
+# A zoom is the page enlarging itself: a transform on <body>, which the browser
+# animates and then draws again at the new size, so the text stays sharp. The
+# recorder cannot give more pixels than the page has, so cutting a part out of
+# the recording afterwards would only blur it.
+#
+# Playwright's pointer, its highlight and the note are children of <html>, not
+# of <body>, so they keep their size and their place.
+#
+# A transform has one side effect: the body becomes the box that its pinned
+# descendants are placed in (`position: fixed`, and `absolute` with no
+# positioned parent). On a page whose body is the window, which is how most
+# apps are built, nothing changes. On a page that scrolls as a whole, a pinned
+# header or a dialog would jump. ZOOM_APPLY therefore measures every element
+# before and after a transform that enlarges nothing, and refuses when one of
+# them moved.
+ZOOM_MS = 800
+# After the movement the browser draws the text again at the new size. A take waits for that.
+ZOOM_SETTLE_MS = 300
+ZOOM_STATE = """() => {
+  const state = window.__howtoZoom;
+  return state ? {left: state.left, top: state.top, factor: state.factor} : null;
+}"""
+# Shows the window [left, top] of the page, enlarged by `factor`, moving there
+# in `ms` milliseconds. Returns "zoomed", "same" when the picture is already
+# there, or "moved" when the page cannot be zoomed and was left as it was.
+ZOOM_APPLY = """([left, top, factor, ms]) => {
+  const body = document.body, root = document.documentElement;
+  let state = window.__howtoZoom;
+  if (!state) {
+    const boxes = () => Array.from(body.querySelectorAll('*'), (element) => {
+      const box = element.getBoundingClientRect();
+      return [box.left, box.top, box.width, box.height];
+    }).flat();
+    const saved = [body.style.transform, body.style.transformOrigin, body.style.transition, root.style.overflow];
+    const before = boxes();
+    root.style.overflow = 'hidden';
+    body.style.transformOrigin = '0 0';
+    body.style.transition = 'none';
+    body.style.transform = 'scale(1) translate(0px, 0px)';
+    const after = boxes();
+    if (before.length !== after.length || before.some((value, i) => Math.abs(value - after[i]) > 0.5)) {
+      [body.style.transform, body.style.transformOrigin, body.style.transition, root.style.overflow] = saved;
+      return 'moved';
+    }
+    state = window.__howtoZoom = {saved, left: 0, top: 0, factor: 1, transform: ''};
+  }
+  // Where the body's corner is on the page at its own size, worked out from
+  // where it is now, so that a page that scrolled while zoomed is still right.
+  const box = body.getBoundingClientRect();
+  const x = box.left / state.factor + state.left, y = box.top / state.factor + state.top;
+  const tx = -left + x * (factor - 1) / factor, ty = -top + y * (factor - 1) / factor;
+  const transform = `scale(${factor}) translate(${tx}px, ${ty}px)`;
+  if (transform === state.transform) return 'same';
+  body.style.transition = ms ? `transform ${ms}ms cubic-bezier(.45,0,.2,1)` : 'none';
+  body.style.transform = transform;
+  Object.assign(state, {left, top, factor, transform});
+  return 'zoomed';
+}"""
+# Starts the way back. Returns whether this page was zoomed at all: a page
+# that loaded after the zoom knows nothing of it and is at its own size.
+ZOOM_OUT = """(ms) => {
+  if (!window.__howtoZoom) return false;
+  document.body.style.transition = ms ? `transform ${ms}ms cubic-bezier(.45,0,.2,1)` : 'none';
+  document.body.style.transform = 'scale(1) translate(0px, 0px)';
+  return true;
+}"""
+# Ends it: the page gets back the styles it had, so nothing stays pinned to the body.
+ZOOM_END = """() => {
+  const state = window.__howtoZoom;
+  if (!state) return;
+  const body = document.body, root = document.documentElement;
+  [body.style.transform, body.style.transformOrigin, body.style.transition, root.style.overflow] = state.saved;
+  delete window.__howtoZoom;
+}"""
 
 
 def action_timeout() -> float:
@@ -118,6 +194,7 @@ class PlaywrightStage:
         self._label_rule = None
         self._note = None
         self._dialogs: list[str] = []
+        self._unzoomable: list[str] = []
         self._tabs: list[Page] = []
         page.on("dialog", self._on_dialog)
         page.context.on("page", self._on_tab)
@@ -139,7 +216,7 @@ class PlaywrightStage:
         self._tabs.append(tab)
 
     def _notices(self) -> tuple[str, ...]:
-        notices = list(self._dialogs)
+        notices = self._dialogs + self._unzoomable
         for tab in self._tabs:
             try:
                 tab.wait_for_load_state("domcontentloaded", timeout=self.timeout_ms)
@@ -194,6 +271,71 @@ class PlaywrightStage:
                 # wait_for needs nothing more: `_one` already waited for the element.
         except PlaywrightError as exc:
             raise StepFailed(f"{action.describe()}: {failure_reason(str(exc))}") from None
+
+    def zoom_to(self, action: Action, factor: float, animate: bool) -> None:
+        """Enlarges the page around the element an action names. Without `animate` it is there at once."""
+        self._interrupt.check()
+        try:
+            self._zoom_to(action, factor, animate)
+        except PlaywrightError as exc:
+            raise StepFailed(f"{action.describe()}: {failure_reason(str(exc))}") from None
+        finally:
+            self._interrupt.check()
+
+    def zoom_out(self, animate: bool) -> None:
+        """Back to the page's own size. Does nothing on a page that is not zoomed."""
+        self._interrupt.check()
+        try:
+            self._zoom_out(animate)
+        finally:
+            self._interrupt.check()
+
+    def _box(self, target) -> zoom.Box | None:
+        """Where an element is on the screen. None for an element that is not drawn."""
+        measured = target.bounding_box(timeout=self.timeout_ms)
+        return zoom.Box(**measured) if measured else None
+
+    def _zoom_to(self, action: Action, factor: float, animate: bool) -> None:
+        target = self._one(action)
+        box = self._box(target)
+        state = self.page.evaluate(ZOOM_STATE)
+        if box is not None and state is not None:
+            box = zoom.Window(**state).to_page(box)
+        if box is not None and not zoom.on_screen(box, self.viewport):
+            # The action would scroll to it, and a scroll moves what a zoomed
+            # picture shows. So the scroll comes first, at the page's own size.
+            self._zoom_out(animate)
+            target.scroll_into_view_if_needed(timeout=self.timeout_ms)
+            box = self._box(target)
+        window = zoom.frame(box, self.viewport, factor) if box is not None else None
+        if window is None:
+            # Nothing to aim at, or a target too large to enlarge.
+            self._zoom_out(animate)
+            return
+        duration = ZOOM_MS if animate else 0
+        outcome = self.page.evaluate(ZOOM_APPLY, [window.left, window.top, window.factor, duration])
+        if outcome == "moved":
+            notice = (
+                f"zoom is skipped on {self.page.url}: "
+                "it would move parts of the page that are pinned to the window"
+            )
+            if notice not in self._unzoomable:
+                self._unzoomable.append(notice)
+        elif outcome == "zoomed" and animate:
+            self.page.wait_for_timeout(ZOOM_MS + ZOOM_SETTLE_MS)
+
+    def _zoom_out(self, animate: bool) -> None:
+        try:
+            if not self.page.evaluate(ZOOM_OUT, ZOOM_MS if animate else 0):
+                return
+            if animate:
+                self.page.wait_for_timeout(ZOOM_MS + ZOOM_SETTLE_MS)
+            self.page.evaluate(ZOOM_END)
+        except PlaywrightError:
+            # The zoomed page is gone: an action replaced it while this ran. Its
+            # successor starts at its own size. If it is the browser that is
+            # gone, the next call says so.
+            pass
 
     def start_recording(self, path: Path) -> None:
         width, height = self.viewport
