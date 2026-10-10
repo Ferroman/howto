@@ -28,9 +28,9 @@ def find_tool(name: str, env_var: str, *, brew_bin: Path = LINUXBREW_BIN) -> str
     raise RunError(f"{name} not found: set {env_var} or install {name}")
 
 
-def run(cmd: list[str], what: str) -> subprocess.CompletedProcess[str]:
+def run(cmd: list[str], what: str, *, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, errors="replace")
+        proc = subprocess.run(cmd, capture_output=True, text=True, errors="replace", cwd=cwd)
     except FileNotFoundError:
         raise RunError(f"{what}: command not found: {cmd[0]}") from None
     if proc.returncode != 0:
