@@ -40,6 +40,19 @@ pi loads the skill from the same folder when its settings list it: `"skills": ["
 - **A page with parts pinned to the window is not zoomed.** A transform makes the body the box that `position: fixed` elements are placed in. On a page whose body is the window, which is how most apps are built, nothing moves. On a page that scrolls as a whole, a pinned header or a dialog would jump. The tool measures every element before it enlarges anything, keeps the picture wide when one of them would move, and says so in a `note:` line of the probe.
 - **A probe zooms as well**, at once and with no waiting, so that it meets the page as the take will.
 
+## Marks
+
+Five actions draw on the picture instead of acting on the page: `box`, `circle`, `underline`, `arrow` and `spotlight`. Each names an element as `click` does. `skill/SKILL.md` says how to write them.
+
+- **A mark is an overlay of the recorder**, like the note: an SVG in screen pixels, outside `<body>`. A stroke appears as if drawn because a CSS animation uncovers it. The recorder removes scripts from an overlay, so nothing in a mark runs one.
+- **A mark does not move with the page.** Whatever moves the picture takes the marks away first: a scroll, and a zoom that has to go somewhere else. While a mark is shown and the next target is already in the picture, the picture holds still.
+- **A mark goes as a click or a key press lands**, so that none is left on a page that no longer has its target. Marks that are still there at the end of a step's actions stay until the narration of the step ends.
+- **An arrow comes from the emptiest side.** There are eight candidates, the one that faces the middle of the picture first. The page is asked how many points of each lie on a control, a picture or text, and the lowest count wins.
+- **Marks fade through a custom property.** They are in a closed shadow root that the page cannot reach, but `--howto-marks` on `<html>` is inherited there, and the marks take their opacity from it.
+- **A probe draws nothing.** It looks for the element of each mark and scrolls to it, as the take will.
+
+Two details depend on the pinned Playwright release. Its stylesheet sets every `svg` in the overlay layer to a height of 0, so the marks carry their size as an inline style. And it wraps an overlay in an element that its own stylesheet does not position, so each mark brings a positioned box of its own.
+
 ## Stopping a run
 
 Ctrl+C stops a probe or a render, runs the storyboard's `cleanup`, and exits with 130. The signal is acted on between browser calls, so the stop can take as long as one action's timeout.
@@ -75,6 +88,7 @@ The browser tests need `uv run playwright install chromium` once. Without Chromi
 | `src/howto/runner.py` | Setup, steps and cleanup, for a probe or a take |
 | `src/howto/capture.py` | The Playwright browser. The only module that imports Playwright |
 | `src/howto/zoom.py` | Which part of the page a zoom shows |
+| `src/howto/marks.py` | Where each mark is drawn, and its SVG |
 | `src/howto/probe.py` | The probe report |
 | `src/howto/assemble.py` | The narration track, ffmpeg and the subtitles |
 | `src/howto/cli.py` | The commands |

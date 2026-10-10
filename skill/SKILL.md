@@ -93,6 +93,8 @@ cleanup:
 | `select` | `select: {label: Role, option: Admin}` |
 | `press` | `press: Enter` or `press: Control+K` |
 | `goto` | `goto: https://app.example.com/settings` |
+| `box`, `circle`, `underline`, `spotlight` | `circle: {role: button, name: Save}`. See [Marks](#marks) |
+| `arrow` | `arrow: {role: button, name: Save, note: Keeps your changes}`. The `note` is optional |
 
 Every value is taken as it is written: `value: 02134` types 02134, and `name: Yes` matches a button named Yes.
 
@@ -133,6 +135,40 @@ steps:
 - The way in and the way out take about three seconds together. A step with a short narration becomes that much longer.
 - A control that is too large to enlarge by the full amount is enlarged by less, so it is never cut off.
 - You cannot see the picture. Leave `zoom` out unless the user asks for it or says that the controls are hard to read, and offer it in your report.
+
+## Marks
+
+A mark is drawn on the picture to show the viewer where to look. It names its element exactly as `click` does, and it changes nothing on the page.
+
+| Mark | What the viewer sees | Use it for |
+|---|---|---|
+| `circle` | A loop drawn by hand around the element | A button, an icon, a word |
+| `box` | A frame around the element | A field, a row, a group of controls |
+| `underline` | A stroke under the element | A piece of text |
+| `arrow` | An arrow that points at the element, with a few words when it has a `note` | Something that needs a word of explanation |
+| `spotlight` | The rest of the page goes dark | A panel or a section that the step is about |
+
+```yaml
+title: Invite a teammate
+url: https://app.example.com
+steps:
+  - say: The Members panel lists everyone in the workspace.
+    do:
+      - spotlight: {role: region, name: Members}
+  - say: Press Invite to add a teammate.
+    do:
+      - arrow: {role: button, name: Invite, note: Starts an invitation}
+      - click: {role: button, name: Invite}
+```
+
+- A mark goes in `do`, at the place where it should appear: before the click it points at, or alone in a step that only explains something.
+- It stays until the next `click` or `press` of its step, or until the narration of the step ends, and then it fades. A `goto` or a `scroll_to` takes it away first.
+- `howto` chooses the side that an arrow comes from: the one where the page is emptiest. Keep a `note` to two or three words. The words of an arrow go in `note`, because `text` already names an element.
+- With `zoom`, the picture moves in on a marked element as it does for a click, and it stays there while the mark is shown.
+- Each mark makes its step about a second longer.
+- A mark needs exactly one element, like every action. A probe checks that and draws nothing.
+- `setup` and `cleanup` take no marks, because they are not recorded.
+- You cannot see the picture. Leave marks out unless the user asks for highlights, arrows or drawings, and offer them in your report. When you use them, use few: one or two in a step, and not in every step.
 
 ## Narration
 
