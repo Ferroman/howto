@@ -8,10 +8,13 @@ after Ctrl+C, because the steps may already have changed data.
 """
 from __future__ import annotations
 
+import signal
+import threading
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping, Protocol, Sequence
+from typing import Iterator, Mapping, Protocol, Sequence
 
 from .narrate import Clip
 from .storyboard import Action, Locator, Pace, Step, Storyboard
@@ -48,13 +51,63 @@ class Clock(Protocol):
     def sleep(self, seconds: float) -> None: ...
 
 
+class Interrupt:
+    """A request to stop: Ctrl+C, or the signal a shell sends when a time limit ends.
+
+    Python's own handling raises KeyboardInterrupt wherever the program
+    happens to be. In the middle of a browser call that is inside Playwright's
+    event loop, which does not survive it: every later call, including the
+    ones that stop the recording and run cleanup, then waits forever. So
+    while a browser is open the signal only leaves a mark here, and `check`
+    raises KeyboardInterrupt at a point between browser calls.
+    """
+
+    def __init__(self) -> None:
+        self._requested = False
+        self.stopped = False  # True once `check` has raised
+
+    def request(self, *_: object) -> None:
+        self._requested = True
+
+    def check(self) -> None:
+        if self._requested:
+            self._requested = False
+            self.stopped = True
+            raise KeyboardInterrupt
+
+    @contextmanager
+    def listening(self) -> Iterator["Interrupt"]:
+        """Routes SIGINT and SIGTERM to this object for the length of the block."""
+        if threading.current_thread() is not threading.main_thread():
+            # Only the main thread may set a signal handler, and only it gets Ctrl+C.
+            yield self
+            return
+        previous = {signum: signal.signal(signum, self.request) for signum in (signal.SIGINT, signal.SIGTERM)}
+        try:
+            yield self
+        finally:
+            for signum, handler in previous.items():
+                signal.signal(signum, handler)
+        # A signal that arrived during the last browser call has not been checked yet.
+        self.check()
+
+
 class RealClock:
+    def __init__(self, interrupt: Interrupt | None = None) -> None:
+        self._interrupt = interrupt or Interrupt()
+
     def now(self) -> float:
         return time.monotonic()
 
     def sleep(self, seconds: float) -> None:
-        if seconds > 0:
-            time.sleep(seconds)
+        # In slices, so that a request to stop ends a long pause at once.
+        end = time.monotonic() + seconds
+        while True:
+            self._interrupt.check()
+            left = end - time.monotonic()
+            if left <= 0:
+                return
+            time.sleep(min(left, 0.1))
 
 
 @dataclass(frozen=True)

@@ -18,7 +18,7 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeout
 
 from .errors import RunError
 from .probe import cut_outline
-from .runner import PageReport, StepFailed
+from .runner import Interrupt, PageReport, StepFailed
 from .storyboard import Action, Locator, Pace, Storyboard
 
 DEFAULT_TIMEOUT = 10.0
@@ -108,10 +108,13 @@ def failure_reason(message: str) -> str:
 
 
 class PlaywrightStage:
-    def __init__(self, page: Page, viewport: tuple[int, int], timeout: float) -> None:
+    def __init__(
+        self, page: Page, viewport: tuple[int, int], timeout: float, interrupt: Interrupt | None = None
+    ) -> None:
         self.page = page
         self.viewport = viewport
         self.timeout_ms = timeout * 1000
+        self._interrupt = interrupt or Interrupt()
         self._label_rule = None
         self._note = None
         self._dialogs: list[str] = []
@@ -159,6 +162,15 @@ class PlaywrightStage:
         return target
 
     def perform(self, action: Action, pace: Pace) -> None:
+        self._interrupt.check()
+        try:
+            self._act(action, pace)
+        finally:
+            # Before and after the browser call, never during it: see Interrupt.
+            # A request to stop outranks the outcome of the action.
+            self._interrupt.check()
+
+    def _act(self, action: Action, pace: Pace) -> None:
         try:
             if action.kind == "goto":
                 self.page.goto(action.value, timeout=self.timeout_ms * 3)
@@ -226,8 +238,17 @@ class PlaywrightStage:
 
 
 @contextmanager
-def open_stage(storyboard: Storyboard, *, profiles_dir: Path, headless: bool = True) -> Iterator[PlaywrightStage]:
-    """A browser with the storyboard's profile and viewport, and its start page open."""
+def open_stage(
+    storyboard: Storyboard, *, profiles_dir: Path, headless: bool = True, interrupt: Interrupt | None = None
+) -> Iterator[PlaywrightStage]:
+    """A browser with the storyboard's profile and viewport, and its start page open.
+
+    With an `interrupt`, the caller handles Ctrl+C itself, and Playwright must
+    not close the browser on it, because cleanup still needs the browser.
+    SIGTERM stays with Playwright: its driver is a process of its own, and
+    without a handler it exits on SIGTERM, after which every browser call
+    waits forever. With the handler it closes the browser and stays.
+    """
     width, height = storyboard.viewport
     timeout = action_timeout()
     with tempfile.TemporaryDirectory(prefix="howto-profile-") as scratch:
@@ -247,6 +268,7 @@ def open_stage(storyboard: Storyboard, *, profiles_dir: Path, headless: bool = T
                     headless=headless,
                     viewport={"width": width, "height": height},
                     device_scale_factor=1,
+                    handle_sigint=interrupt is None,
                 )
             except PlaywrightError as exc:
                 raise RunError(f"cannot start Chromium: {_first_line(exc)}") from None
@@ -257,7 +279,7 @@ def open_stage(storyboard: Storyboard, *, profiles_dir: Path, headless: bool = T
                 except PlaywrightError as exc:
                     raise RunError(f"cannot open {storyboard.url}: {_first_line(exc)}") from None
                 try:
-                    yield PlaywrightStage(page, storyboard.viewport, timeout)
+                    yield PlaywrightStage(page, storyboard.viewport, timeout, interrupt)
                 except PlaywrightError as exc:
                     # An action that fails is a StepFailed. What arrives here is
                     # the browser itself failing: it crashed, or it was closed.

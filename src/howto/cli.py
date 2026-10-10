@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import os
 import shutil
 import sys
@@ -14,7 +15,7 @@ from . import assemble as assembling
 from .errors import HowtoError, RunError, StoryboardError
 from .narrate import narrate
 from .probe import format_report
-from .runner import RealClock, RunResult, run_probe, run_take
+from .runner import Interrupt, RealClock, RunResult, run_probe, run_take
 from .storyboard import PROFILE_RE, Storyboard, load, parse_locator, read_yaml
 from .timeline import narration_only
 from .tools import find_tool
@@ -34,16 +35,32 @@ def profiles_dir() -> Path:
 
 # Playwright is imported only when a browser is needed. `howto --help` and
 # `howto narrate` then start without it, and the tests replace these two names.
-def open_stage(storyboard: Storyboard, *, headless: bool):
+def open_stage(storyboard: Storyboard, *, headless: bool, interrupt: Interrupt | None = None):
     from .capture import open_stage as real
 
-    return real(storyboard, profiles_dir=profiles_dir(), headless=headless)
+    return real(storyboard, profiles_dir=profiles_dir(), headless=headless, interrupt=interrupt)
 
 
 def login(profile_dir: Path, url: str) -> None:
     from .capture import login as real
 
     real(profile_dir, url)
+
+
+@contextlib.contextmanager
+def _browser(storyboard: Storyboard, *, headless: bool):
+    """The browser of a probe or a take, and the Interrupt that holds Ctrl+C until a safe point."""
+    interrupt = Interrupt()
+    try:
+        with interrupt.listening(), open_stage(storyboard, headless=headless, interrupt=interrupt) as stage:
+            yield stage, interrupt
+    except RunError:
+        # A termination signal sent to the whole process group also reaches
+        # Playwright, which closes the browser on it. What fails after that is
+        # a consequence: the run was stopped, and the exit says so.
+        if interrupt.stopped:
+            raise KeyboardInterrupt from None
+        raise
 
 
 def _out_dir(args: argparse.Namespace, storyboard: Storyboard) -> Path:
@@ -83,7 +100,7 @@ def cmd_probe(args: argparse.Namespace) -> int:
             within = parse_locator(read_yaml(args.within), "--within")
         except yaml.YAMLError as exc:
             raise StoryboardError(f"--within: not valid YAML: {exc}") from None
-    with open_stage(storyboard, headless=not args.show) as stage:
+    with _browser(storyboard, headless=not args.show) as (stage, _):
         result = run_probe(storyboard, stage, until=args.until, within=within, max_chars=args.max_chars)
     sys.stdout.write(format_report(result))
     if result.failed:
@@ -124,8 +141,8 @@ def cmd_render(args: argparse.Namespace) -> int:
     keep = args.keep_work
     try:
         video = work / "capture.webm"
-        with open_stage(storyboard, headless=True) as stage:
-            result = run_take(storyboard, stage, clips, RealClock(), video)
+        with _browser(storyboard, headless=True) as (stage, interrupt):
+            result = run_take(storyboard, stage, clips, RealClock(interrupt), video)
         for warning in result.warnings:
             print(f"howto: warning: {warning}", file=sys.stderr)
         if result.failed:

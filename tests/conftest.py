@@ -116,6 +116,7 @@ def fakes(tmp_path, monkeypatch, sandbox, fake_tts):
 
 
 SITE = Path(__file__).parent / "fixtures" / "site"
+SITE_REQUESTS: list[str] = []
 
 
 @pytest.fixture(scope="session")
@@ -129,10 +130,21 @@ def site_url():
         def log_message(self, *args):
             pass
 
+        def do_GET(self):
+            SITE_REQUESTS.append(self.path)
+            super().do_GET()
+
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), functools.partial(Quiet, directory=str(SITE)))
     threading.Thread(target=server.serve_forever, daemon=True).start()
     yield f"http://127.0.0.1:{server.server_address[1]}"
     server.shutdown()
+
+
+@pytest.fixture
+def site_requests(site_url):
+    """The paths the fixture site was asked for since this test began."""
+    SITE_REQUESTS.clear()
+    return SITE_REQUESTS
 
 
 @pytest.fixture(scope="session")

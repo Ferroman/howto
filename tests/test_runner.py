@@ -1,10 +1,14 @@
+import os
+import signal
+import threading
+import time
 from pathlib import Path
 
 import pytest
 
 from fakes import FakeClock, FakeStage
 from howto.narrate import Clip
-from howto.runner import run_probe, run_take, summarize
+from howto.runner import Interrupt, RealClock, run_probe, run_take, summarize
 from howto.storyboard import parse, parse_locator
 
 CLICK_A = 'click role=button name="A"'
@@ -170,3 +174,47 @@ def test_cleanup_runs_even_when_the_recording_cannot_be_stopped(tmp_path):
     with pytest.raises(RuntimeError, match="the recorder is gone"):
         run_take(sb, stage, {}, clock, tmp_path / "capture.webm")
     assert stage.calls == ["start_recording", CLICK_A, "stop_recording", CLEANUP]
+
+
+def test_a_stop_request_is_raised_at_the_next_check_and_only_once():
+    interrupt = Interrupt()
+    interrupt.check()
+    interrupt.request()
+    with pytest.raises(KeyboardInterrupt):
+        interrupt.check()
+    interrupt.check()
+
+
+@pytest.mark.parametrize("signum", [signal.SIGINT, signal.SIGTERM])
+def test_a_signal_waits_for_the_next_check(signum):
+    interrupt = Interrupt()
+    before = signal.getsignal(signum)
+    with interrupt.listening():
+        os.kill(os.getpid(), signum)
+        time.sleep(0.05)  # Without the handler this line would raise, or end the test run.
+        with pytest.raises(KeyboardInterrupt):
+            interrupt.check()
+    assert signal.getsignal(signum) is before
+
+
+def test_a_signal_that_nothing_checked_is_raised_on_the_way_out():
+    interrupt = Interrupt()
+    with pytest.raises(KeyboardInterrupt):
+        with interrupt.listening():
+            os.kill(os.getpid(), signal.SIGTERM)
+            time.sleep(0.05)
+
+
+def test_a_stop_request_ends_a_long_sleep():
+    interrupt = Interrupt()
+    threading.Timer(0.05, interrupt.request).start()
+    started = time.monotonic()
+    with pytest.raises(KeyboardInterrupt):
+        RealClock(interrupt).sleep(30)
+    assert time.monotonic() - started < 2
+
+
+def test_a_sleep_without_a_request_lasts_its_time():
+    started = time.monotonic()
+    RealClock(Interrupt()).sleep(0.25)
+    assert 0.25 <= time.monotonic() - started < 0.6

@@ -38,17 +38,21 @@ def write_board(tmp_path, second="Press Save.", **extra):
 @pytest.fixture
 def browser(monkeypatch, fakes):
     """Replaces Chromium with a FakeStage and real time with a FakeClock."""
-    state = SimpleNamespace(clock=FakeClock(), stage=None, opened=0, headless=None, options={})
+    state = SimpleNamespace(
+        clock=FakeClock(), stage=None, opened=0, headless=None, options={}, interrupt=None, on_close=lambda: None
+    )
 
     @contextlib.contextmanager
-    def fake_open(storyboard, *, headless):
+    def fake_open(storyboard, *, headless, interrupt=None):
         state.opened += 1
         state.headless = headless
+        state.interrupt = interrupt
         state.stage = FakeStage(state.clock, **state.options)
         yield state.stage
+        state.on_close()
 
     monkeypatch.setattr(cli, "open_stage", fake_open)
-    monkeypatch.setattr(cli, "RealClock", lambda: state.clock)
+    monkeypatch.setattr(cli, "RealClock", lambda interrupt=None: state.clock)
     return state
 
 
@@ -229,3 +233,21 @@ def test_login_opens_the_profile_directory(fakes, monkeypatch):
     monkeypatch.setattr(cli, "login", lambda directory, url: seen.update(directory=directory, url=url))
     assert cli.main(["login", "demo", "http://demo.test"]) == 0
     assert seen == {"directory": fakes.sandbox.data / "profiles" / "demo", "url": "http://demo.test"}
+
+
+@pytest.mark.parametrize("command", ["render", "probe"])
+def test_a_stop_request_during_the_last_browser_call_exits_130(browser, fakes, tmp_path, command):
+    # Nothing checks for a request after the last call, so leaving the browser must.
+    browser.on_close = lambda: browser.interrupt.request()
+    path = write_board(tmp_path)
+    assert cli.main([command, str(path)]) == 130
+    assert not (path.parent / "demo.mp4").exists()
+    assert list(fakes.sandbox.work.iterdir()) == [] if command == "render" else True
+
+
+def test_the_signal_handlers_are_put_back_after_a_render(browser, tmp_path):
+    import signal
+
+    before = signal.getsignal(signal.SIGINT), signal.getsignal(signal.SIGTERM)
+    assert cli.main(["render", str(write_board(tmp_path))]) == 0
+    assert (signal.getsignal(signal.SIGINT), signal.getsignal(signal.SIGTERM)) == before
