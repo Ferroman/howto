@@ -90,13 +90,16 @@ def test_no_narration_gives_empty_subtitle_files():
 
 
 def test_mux_command(tmp_path):
-    command = mux_command("ffmpeg", tmp_path / "capture.webm", tmp_path / "narration.wav", "Invite a teammate", tmp_path / "out.part")
+    command = mux_command(
+        "ffmpeg", tmp_path / "capture.webm", tmp_path / "narration.wav", "Invite a teammate", tmp_path / "out.part", 12.5
+    )
     assert command[0] == "ffmpeg" and command[-1] == str(tmp_path / "out.part")
     joined = " ".join(command)
     for piece in ("-c:v libx264", "-crf 18", "-pix_fmt yuv420p", "-r 25", "-c:a aac", "-b:a 160k", "-f mp4", "-movflags +faststart"):
         assert piece in joined
     assert command[command.index("-metadata") + 1] == "title=Invite a teammate"
     assert command.count("-i") == 2
+    assert command[command.index("-t") + 1] == "12.500"
 
 
 def test_video_duration_reads_ffprobe(fakes, monkeypatch, tmp_path):
@@ -130,6 +133,17 @@ def test_assemble_writes_the_three_outputs(fakes, monkeypatch, tmp_path):
     assert len(samples(tmp_path / "work" / "narration.wav")) == 3 * 48000
     timeline = json.loads((tmp_path / "work" / "timeline.json").read_text())
     assert timeline["video_duration"] == 3.0 and len(timeline["steps"]) == 2
+
+
+def test_the_output_ends_with_the_timeline_not_with_the_recording(fakes, monkeypatch, tmp_path):
+    # The recorder ran on for two seconds after the last step ended at 3.0 s.
+    monkeypatch.setenv("FAKE_FFPROBE_DURATION", "5.0")
+    log = tmp_path / "ffmpeg.log"
+    monkeypatch.setenv("FAKE_FFMPEG_LOG", str(log))
+    run_assemble(fakes, tmp_path)
+    assert " -t 3.000 " in log.read_text()
+    assert len(samples(tmp_path / "work" / "narration.wav")) == 3 * 48000
+    assert json.loads((tmp_path / "work" / "timeline.json").read_text())["video_duration"] == 3.0
 
 
 def test_a_failed_assembly_keeps_the_earlier_outputs(fakes, monkeypatch, tmp_path):

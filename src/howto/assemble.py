@@ -67,7 +67,7 @@ def vtt(steps: Sequence[StepTime]) -> str:
     )
 
 
-def mux_command(ffmpeg: str, video: Path, audio: Path, title: str, out: Path) -> list[str]:
+def mux_command(ffmpeg: str, video: Path, audio: Path, title: str, out: Path, length: float) -> list[str]:
     return [
         ffmpeg, "-y", "-loglevel", "error",
         "-i", str(video), "-i", str(audio),
@@ -76,6 +76,7 @@ def mux_command(ffmpeg: str, video: Path, audio: Path, title: str, out: Path) ->
         "-c:a", "aac", "-b:a", "160k",
         "-metadata", f"title={title}",
         "-movflags", "+faststart",
+        "-t", f"{length:.3f}",
         # The temporary name does not end in .mp4, so the format is named here.
         "-f", "mp4", str(out),
     ]
@@ -104,7 +105,12 @@ def assemble(
     ffmpeg: str,
     ffprobe: str,
 ) -> dict[str, Path]:
-    length = video_duration(ffprobe, video)
+    # Asking for the recording's length is also the check that it is a readable video.
+    recorded = video_duration(ffprobe, video)
+    # The recording is longer than the take: Playwright's recorder repeats the
+    # last frame when it stops, by a second or more when the picture changed
+    # at the very end. The output ends where the timeline ends.
+    length = max([step.end for step in steps] + [clip.end for step in steps for clip in step.clips], default=recorded)
     audio = work / "narration.wav"
     narration_track(steps, length, audio)
     (work / "timeline.json").write_text(json.dumps(to_json(steps, length), indent=2), encoding="utf-8")
@@ -113,7 +119,7 @@ def assemble(
     final = {kind: out_dir / f"{name}.{kind}" for kind in ("mp4", "srt", "vtt")}
     part = {kind: out_dir / f".{name}.{kind}.part" for kind in final}
     try:
-        run(mux_command(ffmpeg, video, audio, title, part["mp4"]), "ffmpeg (assembly)")
+        run(mux_command(ffmpeg, video, audio, title, part["mp4"], length), "ffmpeg (assembly)")
         part["srt"].write_text(srt(steps), encoding="utf-8")
         part["vtt"].write_text(vtt(steps), encoding="utf-8")
         for kind in final:

@@ -100,3 +100,35 @@ def test_a_failed_render_keeps_the_earlier_video(chromium, site_url, fake_tts, r
     monkeypatch.setenv("HOWTO_ACTION_TIMEOUT", "1")
     assert cli.main(["render", str(write_board(tmp_path, site_url, settings="Preferences"))]) == 1
     assert (path.parent / "demo.mp4").read_bytes() == earlier
+
+
+def test_a_video_ends_with_its_timeline(chromium, site_url, fake_tts, real_ffmpeg, sandbox, tmp_path):
+    # The last step changes the picture and then takes its note away. Playwright's
+    # recorder runs on after such an end, by a second or more.
+    _, ffprobe = real_ffmpeg
+    data = {
+        "title": "Invite a teammate",
+        "url": f"{site_url}/settings.html",
+        "steps": [
+            {
+                "say": "Type the email. Then press Invite.",
+                "note": "Use a work address.",
+                "do": [
+                    {"fill": {"label": "Email address", "value": "sam@example.com"}},
+                    {"click": {"role": "button", "name": "Invite"}},
+                ],
+            },
+        ],
+    }
+    path = tmp_path / "videos" / "demo.yaml"
+    path.parent.mkdir(exist_ok=True)
+    path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    assert cli.main(["render", str(path), "--keep-work"]) == 0
+
+    shown = subprocess.run(
+        [ffprobe, "-v", "error", "-show_entries", "format=duration", "-of", "json", str(path.parent / "demo.mp4")],
+        capture_output=True, text=True, check=True,
+    )
+    (work,) = sandbox.work.iterdir()
+    timeline = json.loads((work / "timeline.json").read_text())
+    assert abs(float(json.loads(shown.stdout)["format"]["duration"]) - timeline["steps"][-1]["end"]) <= 0.5
