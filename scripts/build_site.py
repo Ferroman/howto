@@ -45,6 +45,7 @@ CODE_SPAN = re.compile(r"(`+)(?!`).*?(?<!`)\1(?!`)")
 TARGET = re.compile(r"""\]\(([^()\s]+)(\s+"[^"]*")?\)""")
 PICTURE = re.compile(r"(?<!\[)!\[([^\]]*)\]\(diagrams/static/([^()\s/]+)\.png\)")
 DEFINITION = re.compile(r"^ {0,3}\[[^\]]+\]:\s*\S")
+LIST_ITEM = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s")
 SCHEME = re.compile(r"^([a-zA-Z][a-zA-Z0-9+.-]*:|//)")
 
 
@@ -127,11 +128,20 @@ class _Document:
         return out
 
 
+def _list_goes_on(following: list[str]) -> bool:
+    """Whether a list goes on after a blank line: with another item, or with more of the last one."""
+    for line in following:
+        if line.strip():
+            return bool(LIST_ITEM.match(line)) or line[0] in " \t"
+    return False
+
+
 def rewrite(text: str, source: str, root: Path) -> tuple[str, list[str]]:
     """The text of a document as the site needs it, and what is wrong with its links."""
     document = _Document(source, root)
     out: list[str] = []
     fence: str | None = None
+    listed = False
     lines = text.splitlines()
     for number, line in enumerate(lines, 1):
         opened = FENCE.match(line)
@@ -148,16 +158,47 @@ def rewrite(text: str, source: str, root: Path) -> tuple[str, list[str]]:
         if DEFINITION.match(line):
             document.problem(number, "a link definition is not checked: write the link inline, as `[text](target)`")
         if not line.strip():
-            out += document.players()
+            # A player is a block of its own, which would end a list that it
+            # stood in. So inside a list it waits until the list is over.
+            if not (listed and _list_goes_on(lines[number:])):
+                out += document.players()
+                listed = False
             out.append(line)
             continue
+        if LIST_ITEM.match(line):
+            listed = True
         out.append(document.line(line, number))
     out += document.players()
     return "\n".join(out) + "\n", document.problems
 
 
+def _kept(root: Path, out: Path) -> str | None:
+    """Why `out` must stay as it is, or None when it is new, empty, or what an earlier run staged.
+
+    Staging starts by removing `out`, and a mistyped --out must not cost a
+    folder of someone's files, or the repository itself.
+    """
+    here, there = root.resolve(), out.resolve()
+    if there == here or there in here.parents:
+        return f"{out}: the repository is inside this folder, so it is not removed: name another with --out"
+    if not out.exists():
+        return None
+    if not out.is_dir():
+        return f"{out}: this is a file, not a folder: name a folder with --out"
+    if any(out.iterdir()) and not all((out / name).is_file() for name in PAGES.values()):
+        return f"{out}: no earlier run staged this folder, so it is not removed: name an empty folder or a new one with --out"
+    return None
+
+
 def stage(root: Path, out: Path) -> list[str]:
-    """Writes the staged tree to `out`, and returns what is wrong. With a problem, no tree is left."""
+    """Writes the staged tree to `out`, and returns what is wrong.
+
+    With a problem in the documents, no tree is left, not even an earlier one.
+    A folder that this script did not stage is refused and stays as it is.
+    """
+    kept = _kept(root, out)
+    if kept:
+        return [kept]
     shutil.rmtree(out, ignore_errors=True)
     problems: list[str] = []
     pages: dict[str, str] = {}

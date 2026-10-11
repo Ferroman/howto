@@ -4,6 +4,7 @@ import shutil
 from pathlib import Path
 
 import pytest
+import yaml
 
 ROOT = Path(__file__).parent.parent
 # The script is not part of the package, so it is loaded from its file.
@@ -167,6 +168,18 @@ def test_a_video_in_a_list_plays_after_the_list(repo):
     )
 
 
+def test_a_video_in_a_loose_list_plays_after_the_list(repo):
+    text = "- [The video](docs/media/invite.mp4)\n\n- Another item\n\n  More of it.\n\nAfter the list.\n"
+    assert rewritten(repo, "README.md", text) == (
+        "- [The video](media/invite.mp4)\n\n- Another item\n\n  More of it.\n\n" + PLAYER + "\nAfter the list.\n"
+    )
+
+
+def test_a_video_in_a_numbered_list_that_ends_the_document_plays_after_it(repo):
+    text = "1. One\n\n2. [The video](docs/media/invite.mp4)\n\n3. Three\n"
+    assert rewritten(repo, "README.md", text) == "1. One\n\n2. [The video](media/invite.mp4)\n\n3. Three\n\n" + PLAYER
+
+
 def test_a_video_named_in_code_gets_no_player(repo):
     text = "The file `[video](docs/media/invite.mp4)` is not a link.\n"
     assert rewritten(repo, "README.md", text) == text
@@ -231,6 +244,37 @@ def test_a_problem_leaves_no_staged_tree_not_even_an_earlier_one(repo):
     assert not out.exists()
 
 
+def test_a_folder_that_holds_the_repository_is_not_removed(repo):
+    for out in (repo, repo.parent):
+        assert build_site.stage(repo, out) == [
+            f"{out}: the repository is inside this folder, so it is not removed: name another with --out"
+        ]
+    assert (repo / "README.md").is_file()
+
+
+def test_a_folder_that_no_earlier_run_staged_is_not_removed(repo):
+    out = repo / "site"
+    out.mkdir()
+    (out / "precious.txt").write_text("kept\n", encoding="utf-8")
+    assert build_site.stage(repo, out) == [
+        f"{out}: no earlier run staged this folder, so it is not removed: name an empty folder or a new one with --out"
+    ]
+    assert (out / "precious.txt").read_text(encoding="utf-8") == "kept\n"
+
+
+def test_a_file_is_not_staged_over(repo):
+    out = repo / "LICENSE"
+    assert build_site.stage(repo, out) == [f"{out}: this is a file, not a folder: name a folder with --out"]
+    assert out.read_text(encoding="utf-8") == "MIT\n"
+
+
+def test_an_empty_folder_is_staged_into(repo):
+    out = repo / "site"
+    out.mkdir()
+    assert build_site.stage(repo, out) == []
+    assert (out / "index.md").is_file()
+
+
 def test_a_missing_folder_of_diagc_says_how_to_make_it(repo):
     shutil.rmtree(repo / ".diagrams/html")
     assert build_site.stage(repo, repo / "_build" / "docs") == [
@@ -263,3 +307,13 @@ def test_the_links_of_a_real_document_resolve(source):
     _, problems = build_site.rewrite((ROOT / source).read_text(encoding="utf-8"), source, ROOT)
     # The live pages of the diagrams are build output, which a fresh checkout does not have.
     assert [problem for problem in problems if "has no live page" not in problem] == []
+
+
+
+def test_only_main_is_deployed():
+    # A manual run can start from any branch, and the site must come from main alone.
+    workflow = yaml.safe_load((ROOT / ".github/workflows/pages.yml").read_text(encoding="utf-8"))
+    from_main = "github.ref == 'refs/heads/main'"
+    assert from_main in workflow["jobs"]["deploy"]["if"]
+    hand_over = [step for step in workflow["jobs"]["build"]["steps"] if "pages" in step.get("uses", "")]
+    assert len(hand_over) == 2 and all(from_main in step["if"] for step in hand_over)
