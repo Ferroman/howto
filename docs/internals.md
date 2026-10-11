@@ -4,6 +4,14 @@ This page is for someone who changes `howto`, or who wants to know why it behave
 
 ## The parts
 
+![The parts of howto. storyboard.py hands the sentences to narrate.py and the steps to runner.py. runner.py drives capture.py, then hands its result to probe.py, assemble.py or animation.py, one for each command.](../.diagrams/static/parts.png)
+
+An arrow is what one part hands to the next. `cli.py` calls the parts in this order and passes each result on. Along these arrows, only `runner.py` calls the next part itself: it drives `capture.py` through the `Stage` protocol, and the tests put `FakeStage` in its place.
+
+`howto probe`, `howto render` and `howto animate` share most of the picture. A label that starts with the name of one of them marks a path that only that one takes. `howto narrate` goes as far as `narrate.py`, and then has `assemble.py` write the narration track alone.
+
+The picture leaves out the helpers that several parts share: `timeline.py`, `zoom.py`, `marks.py`, and `tools.py`, which runs the other programs.
+
 - **A storyboard is read as written.** `storyboard.py` validates it, and switches YAML's own reading of values off: `value: 02134` types 02134, and a button named `Yes` stays a name.
 - **The narration is spoken first**, one clip for each sentence, by the speech command. A clip is named after a hash of the command, the language, the sentence and the voice, and kept in `~/.cache/howto/clips`. A speech failure therefore stops a render before the browser starts.
 - **The browser is Playwright's Chromium**, and the recording is Playwright's own. `runner.py` performs the steps and waits for each sentence to end, so the picture and the narration are timed against one clock.
@@ -88,3 +96,4 @@ A termination signal (SIGTERM) does the same when it is sent to `howto` alone. S
 | `skill/SKILL.md` | The storyboard format, written for an agent |
 | `examples/` | A demo page and two storyboards for it |
 | `spike/` | The measurements made before the build |
+| `.diagrams/src/` | The diagrams of the README and of this page, as [diagc](https://github.com/Ferroman/diagc) sources. `diagc publish` writes the pictures to `.diagrams/static/` |

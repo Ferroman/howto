@@ -11,3 +11,6 @@ examples/*.mp4
 examples/*.srt
 examples/*.vtt
 examples/*.wav
+.diagrams/.artifacts/
+.diagrams/html/
+.diagrams/diff/
