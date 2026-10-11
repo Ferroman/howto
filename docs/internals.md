@@ -16,6 +16,7 @@ The picture leaves out the helpers that several parts share: `timeline.py`, `zoo
 - **The narration is spoken first**, one clip for each sentence, by the speech command. A clip is named after a hash of the command, the language, the sentence and the voice, and kept in `~/.cache/howto/clips`. A speech failure therefore stops a render before the browser starts.
 - **The browser is Playwright's Chromium**, and the recording is Playwright's own. `runner.py` performs the steps and waits for each sentence to end, so the picture and the narration are timed against one clock.
 - **ffmpeg puts the two together**, and the subtitles are written from the same timeline.
+- **A take has a work folder of its own** under `~/.cache/howto/work`, named after the storyboard. It holds the recording, and with it the narration track and the timeline of a video, or the frames of a picture. The folder is removed when the command ends. `--keep-work` keeps it, and a failed assembly keeps it as well and prints its path.
 - **`playwright` is pinned to one release**, 1.63.0. Its recorder writes 25 frames a second with no option to change it. `capture.py` uses three details of that release that no option covers: it hides the label the recorder writes on every action, through an internal element name (`x-pw-title`); it removes an overlay by leaving its `with` block, because `close()` does nothing in that release's synchronous API; and the marks depend on its overlay stylesheet, as described below. Raise the pin on purpose and run the browser tests.
 
 ## Zoom
@@ -53,7 +54,7 @@ Two details depend on the pinned Playwright release. Its stylesheet sets every `
 - **The crop is one fixed part of the window**, measured once after `setup`, with 12 pixels around the element. Its corner and its size are even numbers, because ffmpeg cuts a recording at even pixels only. A zoom moves the page under it, so a storyboard with both is refused.
 - **A probe reports the crop**, and names each action or mark whose element is outside it. The author is often a model that cannot look at the picture.
 - **Only the frames that differ are kept.** ffmpeg samples 12.5 frames a second and writes a frame when the picture changed, named by its number. The distance to the next number is the time the frame is shown, and both encoders are given that time. A GIF encoder that drops repeated frames itself loses the pause at the end of the loop, because its last frame has no successor to take a time from.
-- **The GIF has one palette and no dither.** Dither noise differs from frame to frame, so no frame repeats: a GIF of 2.6 MB was 1.9 MB without it, and 1.3 MB with the repeated frames dropped as well. The WebP is lossy and about three times smaller.
+- **The GIF has one palette and no dither.** Dither noise differs from frame to frame, so no frame repeats: a GIF of 2.6 MB was 1.9 MB without it, and 1.3 MB with the repeated frames dropped as well. The WebP is lossy, and two to four times smaller: between 2.4 and 3.8 times in six pictures.
 - **ffmpeg runs inside the folder of the frames**, and names the frames and their list without a path. It reads a `%` in the path of a frame as the place of a number, and release 6 puts the folder of the list in front of every frame in it. A work folder with a `%` in its name then broke the GIF on Ubuntu 24.04, while release 9 built it.
 - **The first 0.2 seconds of the recording are left out.** The recorder takes its first frame before its overlays are drawn, so the strip is missing from it, and the picture would flash at every loop.
 
@@ -93,6 +94,8 @@ A termination signal (SIGTERM) does the same when it is sent to `howto` alone. S
 | `src/howto/assemble.py` | The narration track, ffmpeg and the subtitles |
 | `src/howto/animation.py` | The GIF and the WebP of an animated picture |
 | `src/howto/cli.py` | The commands |
+| `src/howto/tools.py` | Finds ffmpeg, ffprobe and img2webp, and runs the other programs |
+| `src/howto/errors.py` | The errors that end a command, each with its exit code |
 | `skill/SKILL.md` | The storyboard format, written for an agent |
 | `examples/` | A demo page and two storyboards for it |
 | `spike/` | The measurements made before the build |
