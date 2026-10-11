@@ -14,3 +14,7 @@ examples/*.wav
 .diagrams/.artifacts/
 .diagrams/html/
 .diagrams/diff/
+
+# What the build of the site writes.
+_build/
+_site/
