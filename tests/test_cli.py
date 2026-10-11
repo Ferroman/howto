@@ -1,4 +1,6 @@
 import contextlib
+import os
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -252,6 +254,50 @@ def test_login_opens_the_profile_directory(fakes, monkeypatch):
     monkeypatch.setattr(cli, "login", lambda directory, url: seen.update(directory=directory, url=url))
     assert cli.main(["login", "demo", "http://demo.test"]) == 0
     assert seen == {"directory": fakes.sandbox.data / "profiles" / "demo", "url": "http://demo.test"}
+
+
+def mode(directory):
+    return directory.stat().st_mode & 0o777
+
+
+def test_login_keeps_a_new_profile_to_its_owner(fakes, monkeypatch):
+    # A profile holds a signed-in session. The browser is given a folder that is already closed.
+    seen = {}
+
+    def browser(directory, url):
+        directory.mkdir(parents=True, exist_ok=True)  # as the real one does
+        seen["mode"] = mode(directory)
+
+    monkeypatch.setattr(cli, "login", browser)
+    before = os.umask(0o022)
+    try:
+        assert cli.main(["login", "demo", "http://demo.test"]) == 0
+    finally:
+        os.umask(before)
+    assert seen["mode"] == 0o700
+
+
+def test_login_closes_a_profile_that_others_could_read(fakes, monkeypatch):
+    profile = fakes.sandbox.data / "profiles" / "demo"
+    profile.mkdir(parents=True)
+    profile.chmod(0o755)
+    monkeypatch.setattr(cli, "login", lambda directory, url: None)
+    assert cli.main(["login", "demo", "http://demo.test"]) == 0
+    assert mode(profile) == 0o700
+
+
+def test_login_stops_when_the_profile_cannot_be_closed(fakes, monkeypatch, capsys):
+    opened = []
+    monkeypatch.setattr(cli, "login", lambda directory, url: opened.append(directory))
+
+    def refuse(self, mode):
+        raise PermissionError(1, "Operation not permitted", str(self))
+
+    monkeypatch.setattr(Path, "chmod", refuse)
+    assert cli.main(["login", "demo", "http://demo.test"]) == 1
+    err = capsys.readouterr().err
+    assert str(fakes.sandbox.data / "profiles" / "demo") in err and "Operation not permitted" in err
+    assert opened == []
 
 
 @pytest.mark.parametrize("command", ["render", "probe", "animate"])

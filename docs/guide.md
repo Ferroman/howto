@@ -127,6 +127,7 @@ A picture of a real app, cropped to one panel of a diagram editor:
 - **A picture is 0.2 seconds shorter than its take.** The recorder's first frame comes before the strip for the notes is drawn, so the start of the recording is left out.
 - **`howto voice NAME ... --replace` changes every video that names the voice**, at its next render. The clips of the earlier voice stay in the cache, but its clip is gone, and the same description does not give the same voice twice.
 - **Values are typed as written.** `value: 02134` types 02134. YAML's own reading (octal numbers, `Yes` as true, dates) is switched off for a storyboard.
+- **A profile is a signed-in session on your disk.** `howto login` makes its folder, `~/.local/share/howto/profiles/NAME`, readable by you alone. To remove the session from the machine, delete the folder.
 - **`cleanup` runs after every probe and take in which `setup` completed.** Use it to undo what the steps did.
 - **An element gets 10 seconds to appear.** `HOWTO_ACTION_TIMEOUT` changes that for a slow app.
 - **A failed render keeps the earlier video.** The outputs are renamed into place only when all three exist. The same holds for the pictures of `howto animate`.

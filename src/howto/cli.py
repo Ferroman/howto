@@ -90,10 +90,20 @@ def _explain_failure(storyboard: Storyboard, result: RunResult) -> str:
     return f"{label}: {failed.error}"
 
 
+def _close_to_others(profile_dir: Path) -> None:
+    """A profile holds a signed-in session, so its folder is made for its owner alone, before the browser writes to it."""
+    try:
+        profile_dir.mkdir(parents=True, exist_ok=True)
+        profile_dir.chmod(0o700)
+    except OSError as exc:
+        raise RunError(f"cannot keep the profile {profile_dir} to yourself: {exc.strerror or exc}") from None
+
+
 def cmd_login(args: argparse.Namespace) -> int:
     if not PROFILE_RE.match(args.profile):
         raise StoryboardError("profile: use letters, digits, `-` and `_` only")
     target = profiles_dir() / args.profile
+    _close_to_others(target)
     print(f"Sign in, then close the browser window. Profile: {target}")
     login(target, args.url)
     return 0
