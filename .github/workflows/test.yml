@@ -24,6 +24,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.3.0
+        with:
+          # One cache for each Python. With one name for both, the two jobs
+          # race to save it, and the slower one ends with a warning.
+          cache-suffix: python-${{ matrix.python }}
       - name: Install ffmpeg and img2webp
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg webp
       - name: Install Chromium
