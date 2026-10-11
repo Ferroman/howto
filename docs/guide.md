@@ -1,6 +1,6 @@
 # Making videos and pictures with howto
 
-This guide is for the person who wants the video. [The README](../README.md) says how to install `howto` and how to set up speech. [The skill](../skill/SKILL.md) is the reference of the storyboard format, written for the agent that writes it.
+This guide is for the person who wants the video. [The README](../README.md) says how to install `howto`, and [the speech page](speech.md) how to set up a speech command. [The skill](../skill/SKILL.md) is the reference of the storyboard format, written for the agent that writes it.
 
 ## Make a video
 
@@ -43,7 +43,7 @@ A mark stays until the next click, key press or choice from a list in its step, 
 
 Without anything else, a video is narrated in the voice of the speech command. With `howto-tts-kokoro` you choose one of Kokoro's voices in the command itself: `HOWTO_TTS="howto-tts-kokoro --voice am_michael"`.
 
-With a speech command that can design a voice and clone it, such as `howto-tts-audiocpp`, you describe a narrator in plain words and listen to the result:
+With a speech command that can design a voice and clone it, such as [`howto-tts-audiocpp`](speech.md#audiocpp), you describe a narrator in plain words and listen to the result:
 
 ```bash
 howto voice narrator "A calm, friendly man in his thirties with a clear American accent"
