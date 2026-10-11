@@ -6,7 +6,7 @@
 
 ![Inviting a teammate: an animated picture made by howto](docs/media/invite-picture.gif)
 
-`howto animate` made that picture from [examples/invite-picture.yaml](examples/invite-picture.yaml). `howto render` made [this narrated video](docs/media/invite.mp4) from [examples/invite.yaml](examples/invite.yaml).
+`howto animate` made that picture from [examples/invite-picture.yaml](examples/invite-picture.yaml). `howto render` made [this narrated video](docs/media/invite.mp4) from [examples/invite.yaml](examples/invite.yaml). On [the site](https://ferroman.github.io/howto/) the video plays in the page.
 
 - **A storyboard is the only input.** It names each control as a person would, `{role: button, name: Invite}`, and says what to tell the viewer at each step. `howto` performs it in a browser of its own, records it and speaks the narration.
 - **An AI agent can write the storyboard.** [skill/SKILL.md](skill/SKILL.md) teaches an agent the format. The agent explores your app with `howto probe`, which prints a text outline of the page, so a model without image input is enough. `howto` itself calls no model.

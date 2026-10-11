@@ -97,3 +97,5 @@ A termination signal (SIGTERM) does the same when it is sent to `howto` alone. S
 | `examples/` | A demo page and two storyboards for it |
 | `spike/` | The measurements made before the build |
 | `.diagrams/src/` | The diagrams of the README and of this page, as [diagc](https://github.com/Ferroman/diagc) sources. `diagc publish` writes the pictures to `.diagrams/static/` |
+| `scripts/build_site.py` | Stages the documents for [the site](https://ferroman.github.io/howto/): their names there, their links, a player for each video and a link to each live diagram |
+| `zensical.toml` | The name, the menu and the theme of the site, for Zensical |
