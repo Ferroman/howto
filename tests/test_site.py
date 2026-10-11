@@ -1,5 +1,6 @@
 """The script that stages the documentation for the site: scripts/build_site.py."""
 import importlib.util
+import shutil
 from pathlib import Path
 
 import pytest
@@ -190,3 +191,75 @@ def test_a_diagram_that_is_already_a_link_is_not_wrapped_again(repo):
 
 def test_another_picture_is_not_made_a_link(repo):
     assert rewritten(repo, "README.md", "![A picture](docs/media/picture.gif)\n") == "![A picture](media/picture.gif)\n"
+
+
+def staged_files(out):
+    return sorted(path.relative_to(out).as_posix() for path in out.rglob("*") if path.is_file())
+
+
+def test_the_staged_tree_has_the_documents_and_the_folders(repo):
+    out = repo / "_build" / "docs"
+    assert build_site.stage(repo, out) == []
+    assert staged_files(out) == [
+        "diagrams/html/index.html",
+        "diagrams/html/parts.html",
+        "diagrams/static/parts.png",
+        "guide.md",
+        "index.md",
+        "internals.md",
+        "media/invite.mp4",
+        "media/picture.gif",
+        "speech.md",
+        "storyboard.md",
+    ]
+    assert (out / "index.md").read_text(encoding="utf-8") == "# howto\n"
+
+
+def test_a_second_run_replaces_the_first(repo):
+    out = repo / "_build" / "docs"
+    assert build_site.stage(repo, out) == []
+    (repo / "docs/media/picture.gif").unlink()
+    assert build_site.stage(repo, out) == []
+    assert "media/picture.gif" not in staged_files(out)
+
+
+def test_a_problem_leaves_no_staged_tree_not_even_an_earlier_one(repo):
+    out = repo / "_build" / "docs"
+    assert build_site.stage(repo, out) == []
+    (repo / "docs/guide.md").write_text("[Gone](gone.md)\n", encoding="utf-8")
+    assert build_site.stage(repo, out) == ["docs/guide.md:1: the link `gone.md` names nothing: docs/gone.md does not exist"]
+    assert not out.exists()
+
+
+def test_a_missing_folder_of_diagc_says_how_to_make_it(repo):
+    shutil.rmtree(repo / ".diagrams/html")
+    assert build_site.stage(repo, repo / "_build" / "docs") == [
+        ".diagrams/html: the folder is missing: run `diagc publish` first"
+    ]
+
+
+def test_a_missing_document_is_a_problem(repo):
+    (repo / "docs/speech.md").unlink()
+    problems = build_site.stage(repo, repo / "_build" / "docs")
+    assert len(problems) == 1 and problems[0].startswith("docs/speech.md: cannot be read")
+
+
+def test_the_command_prints_the_folder_and_exits_with_0(repo, capsys):
+    assert build_site.main(["--root", str(repo)]) == 0
+    assert capsys.readouterr().out.strip() == str(repo / "_build" / "docs")
+
+
+def test_the_command_prints_every_problem_and_exits_with_1(repo, capsys):
+    (repo / "README.md").write_text("[A](a.md)\n\n[B](b.md)\n", encoding="utf-8")
+    assert build_site.main(["--root", str(repo)]) == 1
+    err = capsys.readouterr().err
+    assert "build_site: README.md:1: the link `a.md` names nothing" in err
+    assert "build_site: README.md:3: the link `b.md` names nothing" in err
+    assert "build_site: 2 problem(s). Nothing is staged." in err
+
+
+@pytest.mark.parametrize("source", build_site.PAGES)
+def test_the_links_of_a_real_document_resolve(source):
+    _, problems = build_site.rewrite((ROOT / source).read_text(encoding="utf-8"), source, ROOT)
+    # The live pages of the diagrams are build output, which a fresh checkout does not have.
+    assert [problem for problem in problems if "has no live page" not in problem] == []

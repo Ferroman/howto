@@ -11,8 +11,11 @@ It uses the standard library only, and knows nothing about the generator.
 """
 from __future__ import annotations
 
+import argparse
 import posixpath
 import re
+import shutil
+import sys
 from pathlib import Path
 
 REPOSITORY = "https://github.com/Ferroman/howto"
@@ -151,3 +154,51 @@ def rewrite(text: str, source: str, root: Path) -> tuple[str, list[str]]:
         out.append(document.line(line, number))
     out += document.players()
     return "\n".join(out) + "\n", document.problems
+
+
+def stage(root: Path, out: Path) -> list[str]:
+    """Writes the staged tree to `out`, and returns what is wrong. With a problem, no tree is left."""
+    shutil.rmtree(out, ignore_errors=True)
+    problems: list[str] = []
+    pages: dict[str, str] = {}
+    for source, name in PAGES.items():
+        try:
+            text = (root / source).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            problems.append(f"{source}: cannot be read: {exc}")
+            continue
+        pages[name], found = rewrite(text, source, root)
+        problems += found
+    for folder in FOLDERS:
+        if not (root / folder).is_dir():
+            hint = ": run `diagc publish` first" if folder.startswith(".diagrams") else ""
+            problems.append(f"{folder}: the folder is missing{hint}")
+    if problems:
+        return problems
+    out.mkdir(parents=True)
+    for name, text in pages.items():
+        (out / name).write_text(text, encoding="utf-8")
+    for folder, place in FOLDERS.items():
+        shutil.copytree(root / folder, out / place)
+    return []
+
+
+def main(argv: list[str] | None = None) -> int:
+    here = Path(__file__).resolve().parent.parent
+    parser = argparse.ArgumentParser(description="Stage the documentation for the site.")
+    parser.add_argument("--root", type=Path, default=here, help="the repository (default: the one this script is in)")
+    parser.add_argument("--out", type=Path, help="the folder to write (default: ROOT/_build/docs)")
+    args = parser.parse_args(argv)
+    out = args.out or args.root / "_build" / "docs"
+    problems = stage(args.root, out)
+    for problem in problems:
+        print(f"build_site: {problem}", file=sys.stderr)
+    if problems:
+        print(f"build_site: {len(problems)} problem(s). Nothing is staged.", file=sys.stderr)
+        return 1
+    print(out)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
