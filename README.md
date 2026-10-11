@@ -21,6 +21,19 @@ This is version 0.1.
 - **Narration is in English.**
 - **Web apps only.** Whatever runs in a browser tab can be filmed. Desktop programs cannot.
 
+## How it fits together
+
+![howto reads a storyboard that you or an agent wrote. On your machine it runs Chromium, a speech command, ffmpeg and img2webp, and they give a narrated video or an animated picture.](.diagrams/static/context.png)
+
+`howto` does its work through other programs, and all of them run on your machine.
+
+- **Chromium** performs the storyboard on your web app and records it.
+- **The speech command** speaks each sentence of the narration. An animated picture needs none.
+- **ffmpeg**, with `ffprobe`, joins the recording and the narration into the video, and builds the GIF.
+- **`img2webp`** encodes the WebP, and nothing else needs it.
+
+The agent is optional: a person writes a storyboard in the same way, with `howto probe`. [docs/internals.md](docs/internals.md#the-parts) shows the parts inside `howto`.
+
 ## Requirements
 
 - [`uv`](https://docs.astral.sh/uv/), which builds the Python environment
