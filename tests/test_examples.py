@@ -60,6 +60,18 @@ def test_the_guide_shows_the_example_as_it_is():
     assert read_yaml(shown) == read_yaml((EXAMPLES / "invite-picture.yaml").read_text(encoding="utf-8"))
 
 
+def first_block_under(document, heading):
+    """The first code block under a heading of a document."""
+    _, found, rest = (ROOT / document).read_text(encoding="utf-8").partition(f"\n{heading}\n")
+    assert found, f"{document} has no heading {heading!r}"
+    return rest.split("```")[1]
+
+
+def test_the_readme_sets_kokoro_up_as_the_speech_page_does():
+    # The setup is shown twice, so that neither reader has to go to the other page for it.
+    assert first_block_under("README.md", "### Kokoro") == first_block_under("docs/speech.md", "## Kokoro")
+
+
 @pytest.fixture(scope="module")
 def example_site():
     class Quiet(http.server.SimpleHTTPRequestHandler):

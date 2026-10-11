@@ -26,6 +26,9 @@ dependencies = [
 
 [project.optional-dependencies]
 test = ["pytest>=8"]
+# The generator of the site. It is alpha and changes fast, so it is pinned
+# exactly. Raise the pin on purpose, and build the site with --strict after.
+site = ["zensical==0.0.69"]
 
 [project.scripts]
 howto = "howto.cli:main"

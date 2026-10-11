@@ -1,0 +1,67 @@
+# Builds the site at https://ferroman.github.io/howto/ from the documents, and
+# deploys it from main. A pull request builds it without deploying, so a dead
+# link fails before the merge and not after. A manual run from another branch
+# builds only as well: the site comes from main alone.
+name: pages
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A deploy must finish once started, so the runs on main wait for each other.
+# A pull request has a group of its own, and a newer push replaces its run.
+concurrency:
+  group: pages-${{ github.event_name == 'pull_request' && github.ref || 'deploy' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - uses: astral-sh/setup-uv@v10.3.0
+      # The live pages of the diagrams, and their pictures for the gallery.
+      - name: Publish the diagrams
+        run: npx --yes @diagc/cli@1.1.3 publish --link https://github.com/Ferroman/howto
+      # Without Chrome, diagc writes the pages without pictures and does not
+      # fail. A card of the gallery has a thumbnail only when its picture was
+      # rendered in this run, so the two counts say whether it was.
+      - name: Check that every diagram has its picture
+        run: |
+          cards=$(grep -o 'class="card"' .diagrams/html/index.html | wc -l)
+          thumbnails=$(grep -o '<img ' .diagrams/html/index.html | wc -l)
+          echo "$cards cards, $thumbnails thumbnails"
+          test "$cards" -gt 0 && test "$cards" -eq "$thumbnails"
+      - name: Stage the documents
+        run: uv run --extra site python scripts/build_site.py
+      - name: Build the site
+        run: uv run --extra site zensical build --strict
+      - if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: actions/configure-pages@v6
+      - if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: _site
+
+  deploy:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

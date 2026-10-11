@@ -6,7 +6,7 @@
 
 ![Inviting a teammate: an animated picture made by howto](docs/media/invite-picture.gif)
 
-`howto animate` made that picture from [examples/invite-picture.yaml](examples/invite-picture.yaml). `howto render` made [this narrated video](docs/media/invite.mp4) from [examples/invite.yaml](examples/invite.yaml).
+`howto animate` made that picture from [examples/invite-picture.yaml](examples/invite-picture.yaml). `howto render` made [this narrated video](docs/media/invite.mp4) from [examples/invite.yaml](examples/invite.yaml). On [the site](https://ferroman.github.io/howto/) the video plays in the page.
 
 - **A storyboard is the only input.** It names each control as a person would, `{role: button, name: Invite}`, and says what to tell the viewer at each step. `howto` performs it in a browser of its own, records it and speaks the narration.
 - **An AI agent can write the storyboard.** [skill/SKILL.md](skill/SKILL.md) teaches an agent the format. The agent explores your app with `howto probe`, which prints a text outline of the page, so a model without image input is enough. `howto` itself calls no model.
@@ -125,15 +125,7 @@ The agent writes the storyboard, probes it until every step works, and renders i
 
 ## Speech
 
-`howto` speaks through a command. It runs `tts` when `HOWTO_TTS` is not set, and it calls the command in three ways:
-
-```
-COMMAND -l en -o FILE TEXT                                    a sentence
-COMMAND -l en -o FILE --clone WAV --clone-text WORDS TEXT     a sentence in the voice of a clip
-COMMAND -l en -o FILE --design DESCRIPTION TEXT               a new voice, from a description
-```
-
-The command writes a WAV file and exits with 0. Any program that does this can be the speech command, and the first form alone is enough for a video without a `voice:`. Two commands come with `howto`:
+`howto` speaks through a command, and `HOWTO_TTS` names it. Two commands come with `howto`:
 
 | Command | Engine | Voices | Needs |
 |---|---|---|---|
@@ -141,6 +133,8 @@ The command writes a WAV file and exits with 0. Any program that does this can b
 | `howto-tts-audiocpp` | [audio.cpp](https://github.com/0xShug0/audio.cpp) | One plain voice, and voices that you design | A graphics card helps. 0.4 GB of models, and 5.3 GB more for voices |
 
 ### Kokoro
+
+Kokoro is the quickest to set up:
 
 ```bash
 sudo apt install libportaudio2        # Debian and Ubuntu, when it is missing
@@ -154,43 +148,13 @@ export HOWTO_TTS=howto-tts-kokoro
 
 `kokoro-tts` needs the PortAudio library. A desktop system usually has it, and a server or a container usually lacks it.
 
-To have another voice, name it in the command: `HOWTO_TTS="howto-tts-kokoro --voice am_michael"`. `kokoro-tts --help-voices` lists them. The voice is an option because `howto` names each spoken clip after the command that spoke it, so another voice is spoken anew and nothing stale is played.
+[docs/speech.md](docs/speech.md) has the rest:
 
-On a 16-core processor a sentence takes about two seconds, nearly all of it the start of the program: 20 seconds of speech took five.
-
-### audio.cpp
-
-Download a release of [audio.cpp](https://github.com/0xShug0/audio.cpp/releases) for your machine and the models from [its model repository](https://huggingface.co/audio-cpp/audio.cpp-gguf), into one folder:
-
-| File under the folder | Used for | Size |
-|---|---|---|
-| `audiocpp_cli` | Everything | |
-| `models/Supertonic-3-GGUF/supertonic-3-q8_0.gguf` | A sentence without a `voice:` | 0.4 GB |
-| `models/Qwen3-TTS-12Hz-1.7B-Base-GGUF/qwen3-tts-12hz-1.7b-base-q8_0_v2.gguf` | A sentence in a voice | 2.6 GB |
-| `models/Qwen3-TTS-12Hz-1.7B-VoiceDesign-GGUF/qwen3-tts-12hz-1.7b-voicedesign-q8_0.gguf` | `howto voice`, which makes a voice | 2.7 GB |
-
-```bash
-export AUDIOCPP_DIR=~/audio.cpp
-export HOWTO_TTS=howto-tts-audiocpp
-```
-
-The engine chooses between the processor and a graphics card by itself. `AUDIOCPP_BACKEND=cpu AUDIOCPP_THREADS=16` keeps it on the processor, which is faster than a weak graphics card: a cloned voice took two to three seconds for a second of speech on 16 cores, and four on integrated graphics. `howto-tts-audiocpp --help` lists the other variables.
-
-### Voices
-
-With a speech command that can design and clone, which `howto-tts-audiocpp` can, you describe a narrator in plain words:
-
-```bash
-howto voice narrator "A calm, friendly man in his thirties with a clear American accent"
-```
-
-Listen to `~/.local/share/howto/voices/narrator.wav`, and run it again with `--replace` and other words until it is right. Then put `voice: narrator` at the top of a storyboard. [This video of a diagram editor](docs/media/diagc-explore.mp4) is narrated in such a voice.
-
-The voice is designed once, as a short clip, and every sentence is then a clone of that clip. Sending the description with each sentence does not work: the model invents a new speaker every time. A recording of a real speaker works as well: put a few seconds in `NAME.wav` and its words in `NAME.yaml` as `text: ...`.
-
-### The models have licences of their own
-
-`howto` is MIT, and it contains no model. Kokoro and Qwen3-TTS are Apache-2.0. Supertonic 3 is under an OpenRAIL-M licence with use restrictions. Read the licence of the model you choose.
+- [Kokoro](docs/speech.md#kokoro): how to have another of its voices, and how fast it speaks.
+- [audio.cpp](docs/speech.md#audiocpp): how to set it up, and which models to download.
+- [Voices](docs/speech.md#voices): how to make a narrator from a description.
+- [The speech command](docs/speech.md#the-speech-command): how `howto` calls it, so that a program of your own can speak.
+- [The licences of the models](docs/speech.md#the-models-have-licences-of-their-own).
 
 ## Commands
 
@@ -219,6 +183,7 @@ Exit codes: 0 for success, 1 for a step, the narration or the assembly that fail
 ## More
 
 - [docs/guide.md](docs/guide.md): how to make a video and a picture, how to choose a voice, and the things that surprise.
+- [docs/speech.md](docs/speech.md): how to set up a speech command, and how to make a voice.
 - [docs/internals.md](docs/internals.md): how the zoom, the marks, the pictures and the voices work, and why.
 - [skill/SKILL.md](skill/SKILL.md): the storyboard format, written for an agent.
 
@@ -234,4 +199,4 @@ Without Chromium the browser tests are skipped, which is not a pass.
 
 ## Licence
 
-[MIT](LICENSE).
+[MIT](LICENSE). `howto` contains no model, and the speech models have [licences of their own](docs/speech.md#the-models-have-licences-of-their-own).

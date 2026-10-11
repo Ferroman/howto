@@ -1,0 +1,43 @@
+# The site at https://ferroman.github.io/howto/. scripts/build_site.py stages
+# the documents into _build/docs first: they live in three folders of the
+# repository, and their links are written for GitHub. To build the site:
+#
+#   npx --yes @diagc/cli@1.1.3 publish --no-images
+#   uv run --extra site python scripts/build_site.py
+#   uv run --extra site zensical build --strict
+[project]
+site_name = "howto"
+site_description = "Narrated how-to videos and animated pictures of a web app, from a YAML storyboard"
+site_url = "https://ferroman.github.io/howto/"
+repo_url = "https://github.com/Ferroman/howto"
+docs_dir = "_build/docs"
+site_dir = "_site"
+nav = [
+  { "Home" = "index.md" },
+  { "Guide" = "guide.md" },
+  { "Speech" = "speech.md" },
+  { "Storyboard format" = "storyboard.md" },
+  { "Internals" = "internals.md" },
+  { "Diagrams" = "diagrams/html/index.html" },
+]
+
+[project.theme]
+features = ["navigation.tabs", "navigation.top", "search.highlight", "content.code.copy"]
+
+# The reader's system decides between light and dark, and the switch overrides it.
+[[project.theme.palette]]
+media = "(prefers-color-scheme)"
+toggle.icon = "lucide/sun-moon"
+toggle.name = "Switch to light mode"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: light)"
+scheme = "default"
+toggle.icon = "lucide/sun"
+toggle.name = "Switch to dark mode"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: dark)"
+scheme = "slate"
+toggle.icon = "lucide/moon"
+toggle.name = "Switch to system preference"
