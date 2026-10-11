@@ -1,6 +1,8 @@
 """The storyboards in examples/ stay true to the demo page that they film."""
+import argparse
 import functools
 import http.server
+import re
 import threading
 from pathlib import Path
 
@@ -70,6 +72,53 @@ def first_block_under(document, heading):
 def test_the_readme_sets_kokoro_up_as_the_speech_page_does():
     # The setup is shown twice, so that neither reader has to go to the other page for it.
     assert first_block_under("README.md", "### Kokoro") == first_block_under("docs/speech.md", "## Kokoro")
+
+
+def options_of_the_commands():
+    """Each option of each command, as its `--help` has it."""
+    commands, = (action for action in cli.build_parser()._actions if isinstance(action, argparse._SubParsersAction))
+    return {
+        (name, option)
+        for name, parser in commands.choices.items()
+        for action in parser._actions
+        for option in action.option_strings
+        if option.startswith("--") and option != "--help"
+    }
+
+
+def options_in_the_readme():
+    """Each option of the README's table of options, with each command that its row names."""
+    found = set()
+    for line in (ROOT / "README.md").read_text(encoding="utf-8").splitlines():
+        if line.startswith("| `--"):
+            options, commands, _ = line.strip("|").split("|")
+            found |= {
+                (command, option)
+                for option in re.findall(r"`(--[a-z-]+)", options)
+                for command in re.findall(r"`(\w+)`", commands)
+            }
+    return found
+
+
+def test_the_readme_lists_every_option_of_every_command():
+    missing = options_of_the_commands() - options_in_the_readme()
+    assert not missing, f"the README's table of options lacks {sorted(missing)}"
+
+
+def test_the_readme_lists_no_option_that_a_command_lacks():
+    stale = options_in_the_readme() - options_of_the_commands()
+    assert not stale, f"the README's table of options has {sorted(stale)}, which `--help` does not"
+
+
+def exit_codes_in(document):
+    """The rows of a document's table of exit codes."""
+    lines = (ROOT / document).read_text(encoding="utf-8").splitlines()
+    return [line for line in lines if re.match(r"\| \d+ \|", line)]
+
+
+def test_the_readme_gives_the_exit_codes_as_the_skill_does():
+    codes = exit_codes_in("skill/SKILL.md")
+    assert codes and exit_codes_in("README.md") == codes
 
 
 @pytest.fixture(scope="module")

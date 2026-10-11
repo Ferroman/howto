@@ -160,14 +160,36 @@ export HOWTO_TTS=howto-tts-kokoro
 
 | Command | What it does |
 |---|---|
-| `howto probe STORYBOARD` | Runs the steps with no recording and prints an outline of the page. `--until N`, `--within LOCATOR`, `--show` |
-| `howto render STORYBOARD` | Writes `NAME.mp4`, `NAME.srt` and `NAME.vtt` next to the storyboard. `--out DIR` |
-| `howto animate STORYBOARD` | Writes `NAME.gif` and `NAME.webp`, which loop without sound. `--format`, `--width N`, `--out DIR` |
-| `howto narrate STORYBOARD` | Speaks the narration only and writes `NAME.narration.wav` |
+| `howto probe STORYBOARD` | Runs the steps with no recording and prints an outline of the page |
+| `howto render STORYBOARD` | Writes `NAME.mp4`, `NAME.srt` and `NAME.vtt` next to the storyboard |
+| `howto animate STORYBOARD` | Writes `NAME.gif` and `NAME.webp` next to the storyboard. They loop without sound |
+| `howto narrate STORYBOARD` | Speaks the narration only and writes `NAME.narration.wav` next to the storyboard |
 | `howto voice NAME DESCRIPTION` | Makes a voice from a description. `howto voice` lists the voices, and `howto voice NAME` shows one |
 | `howto login PROFILE URL` | Opens a browser window for a person to sign in. The session stays in the profile |
 
-Exit codes: 0 for success, 1 for a step, the narration or the assembly that failed, 2 for a storyboard or a command line that is wrong, and 130 for a run that was stopped.
+The options:
+
+| Option | Command | Meaning |
+|---|---|---|
+| `--until N` | `probe` | Stops after step N, so that the outline is of an earlier page |
+| `--within LOCATOR` | `probe` | Limits the outline to one element, for example `--within '{role: dialog}'` |
+| `--max-chars N` | `probe` | Cuts the outline off at N characters. The default is 20000 |
+| `--show` | `probe` | Uses a visible browser window |
+| `--out DIR` | `render`, `animate`, `narrate` | Where the files go. The default is next to the storyboard |
+| `--keep-work` | `render`, `animate` | Keeps the intermediate files of the take, in a folder under `~/.cache/howto/work` |
+| `--format gif`, `--format webp` | `animate` | Writes one of the two. The default is both |
+| `--width N` | `animate` | Scales a picture wider than N pixels down to N. The default is 960 |
+| `--text WORDS` | `voice` | What the voice says in its clip. The default is two sentences of a video |
+| `--replace` | `voice` | Makes an existing voice anew |
+
+The exit codes:
+
+| Code | Meaning |
+|---|---|
+| 0 | Success |
+| 1 | A step, the narration or the assembly failed, or a program or a voice that the command needs is missing |
+| 2 | The storyboard or the command line is wrong. The message names the step and the field |
+| 130 | The run was stopped with Ctrl+C or a termination signal |
 
 ## Environment variables
 

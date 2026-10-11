@@ -101,7 +101,7 @@ examples/invite-picture.webp  820x472  9.4 s  240 KB
 - **Nothing is spoken.** `say` is ignored, so `note` and the marks explain what happens. A step lasts as long as its actions and its `pause`.
 - **`crop` cuts the picture to one element**, with the notes in a dark strip under it. Without `crop` the picture is the whole window scaled down to 960 pixels, where the text of most apps is too small to read.
 - **End with a pause**, so the viewer sees the result before the loop starts again.
-- **The GIF plays everywhere. The WebP is about a third of its size.** `--format gif` or `--format webp` writes one of them.
+- **The GIF plays everywhere. The WebP is two to four times smaller.** `--format gif` or `--format webp` writes one of them.
 - **To look at a picture**, open it in a browser.
 
 `howto render` on the same storyboard ignores `crop` and films the whole window, so one file can give both a video and a picture.

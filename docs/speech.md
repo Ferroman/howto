@@ -63,7 +63,7 @@ With a speech command that can design and clone, which `howto-tts-audiocpp` can,
 howto voice narrator "A calm, friendly man in his thirties with a clear American accent"
 ```
 
-Listen to `~/.local/share/howto/voices/narrator.wav`, and run it again with `--replace` and other words until it is right. Then put `voice: narrator` at the top of a storyboard. [This video of a diagram editor](media/diagc-explore.mp4) is narrated in such a voice.
+Listen to `~/.local/share/howto/voices/narrator.wav`, and run it again with `--replace` and other words until it is right. The clip says two sentences of a video, and `--text "..."` has it say words of your own. Then put `voice: narrator` at the top of a storyboard. [This video of a diagram editor](media/diagc-explore.mp4) is narrated in such a voice.
 
 The voice is designed once, as a short clip, and every sentence is then a clone of that clip. Sending the description with each sentence does not work: the model invents a new speaker every time. A recording of a real speaker works as well: put a few seconds in `NAME.wav` and its words in `NAME.yaml` as `text: ...`.
 
