@@ -126,3 +126,67 @@ def test_a_link_that_leaves_the_repository_is_a_problem(repo):
 def test_a_link_definition_is_refused(repo):
     _, problems = build_site.rewrite("[The guide][guide]\n\n[guide]: docs/guide.md\n", "README.md", repo)
     assert problems == ["README.md:3: a link definition is not checked: write the link inline, as `[text](target)`"]
+
+
+PLAYER = '<video controls preload="metadata" width="100%" src="media/invite.mp4">\n</video>\n'
+
+
+def test_a_link_to_a_video_gets_a_player_under_its_paragraph(repo):
+    text = "Watch [the video](docs/media/invite.mp4),\nwhich is short.\n\nThe next paragraph.\n"
+    assert rewritten(repo, "README.md", text) == (
+        "Watch [the video](media/invite.mp4),\nwhich is short.\n\n" + PLAYER + "\nThe next paragraph.\n"
+    )
+
+
+def test_a_player_follows_a_paragraph_that_ends_the_document(repo):
+    assert rewritten(repo, "docs/speech.md", "[The video](media/invite.mp4)\n") == (
+        "[The video](media/invite.mp4)\n\n" + PLAYER
+    )
+
+
+def test_a_player_has_subtitles_when_they_lie_beside_the_video(repo):
+    (repo / "docs/media/invite.vtt").write_text("WEBVTT\n", encoding="utf-8")
+    assert rewritten(repo, "README.md", "[The video](docs/media/invite.mp4)\n") == (
+        "[The video](media/invite.mp4)\n\n"
+        '<video controls preload="metadata" width="100%" src="media/invite.mp4">\n'
+        '  <track kind="subtitles" srclang="en" label="English" src="media/invite.vtt" default>\n'
+        "</video>\n"
+    )
+
+
+def test_a_video_linked_twice_in_a_paragraph_gets_one_player(repo):
+    text = "[Once](docs/media/invite.mp4) and [again](docs/media/invite.mp4).\n"
+    assert rewritten(repo, "README.md", text).count("<video") == 1
+
+
+def test_a_video_in_a_list_plays_after_the_list(repo):
+    text = "- [The video](docs/media/invite.mp4)\n- Another item\n\nAfter the list.\n"
+    assert rewritten(repo, "README.md", text) == (
+        "- [The video](media/invite.mp4)\n- Another item\n\n" + PLAYER + "\nAfter the list.\n"
+    )
+
+
+def test_a_video_named_in_code_gets_no_player(repo):
+    text = "The file `[video](docs/media/invite.mp4)` is not a link.\n"
+    assert rewritten(repo, "README.md", text) == text
+
+
+def test_the_picture_of_a_diagram_opens_its_live_page(repo):
+    assert rewritten(repo, "docs/internals.md", "![The parts](../.diagrams/static/parts.png)\n") == (
+        "[![The parts](diagrams/static/parts.png)](diagrams/html/parts.html)\n"
+    )
+
+
+def test_a_diagram_without_a_live_page_is_a_problem(repo):
+    (repo / ".diagrams/html/parts.html").unlink()
+    _, problems = build_site.rewrite("![The parts](.diagrams/static/parts.png)\n", "README.md", repo)
+    assert problems == ["README.md:1: the diagram `parts` has no live page: run `diagc publish` first"]
+
+
+def test_a_diagram_that_is_already_a_link_is_not_wrapped_again(repo):
+    text = "[![The parts](.diagrams/static/parts.png)](docs/guide.md)\n"
+    assert rewritten(repo, "README.md", text) == "[![The parts](diagrams/static/parts.png)](guide.md)\n"
+
+
+def test_another_picture_is_not_made_a_link(repo):
+    assert rewritten(repo, "README.md", "![A picture](docs/media/picture.gif)\n") == "![A picture](media/picture.gif)\n"

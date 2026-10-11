@@ -1,8 +1,11 @@
 """Stages the documentation for the site, in `_build/docs`, for Zensical to render.
 
 The documents stay where they read well on GitHub: the README at the root, the
-guides in docs/, the storyboard format in skill/. On the site each has another
-name, so their links are rewritten here, and each still lands where it did.
+guides in docs/, the storyboard format in skill/. This copies them under the
+names the site gives them and rewrites their links, so that each still lands
+where it did. It changes the text in two more ways: a link to a video gets a
+player under its paragraph, and the picture of a diagram becomes a link to the
+live page that diagc publishes.
 
 It uses the standard library only, and knows nothing about the generator.
 """
@@ -31,10 +34,13 @@ FOLDERS = {
     ".diagrams/html": "diagrams/html",
     ".diagrams/static": "diagrams/static",
 }
+PICTURES, LIVE = ".diagrams/static", ".diagrams/html"
+
 FENCE = re.compile(r"^\s*(`{3,}|~{3,})")
 CODE_SPAN = re.compile(r"(`+)(?!`).*?(?<!`)\1(?!`)")
 # The end of an inline link or image: `](target)`, or `](target "title")`.
 TARGET = re.compile(r"""\]\(([^()\s]+)(\s+"[^"]*")?\)""")
+PICTURE = re.compile(r"(?<!\[)!\[([^\]]*)\]\(diagrams/static/([^()\s/]+)\.png\)")
 DEFINITION = re.compile(r"^ {0,3}\[[^\]]+\]:\s*\S")
 SCHEME = re.compile(r"^([a-zA-Z][a-zA-Z0-9+.-]*:|//)")
 
@@ -49,13 +55,22 @@ def staged(path: str) -> str | None:
     return None
 
 
+def player(video: str, subtitles: str | None) -> str:
+    lines = [f'<video controls preload="metadata" width="100%" src="{video}">']
+    if subtitles:
+        lines.append(f'  <track kind="subtitles" srclang="en" label="English" src="{subtitles}" default>')
+    lines.append("</video>")
+    return "\n".join(lines)
+
+
 class _Document:
-    """One document being rewritten, and the problems found in it."""
+    """One document being rewritten: its problems, and the videos its current block links to."""
 
     def __init__(self, source: str, root: Path) -> None:
         self.source = source
         self.root = root
         self.problems: list[str] = []
+        self.videos: list[str] = []
 
     def problem(self, number: int, message: str) -> None:
         self.problems.append(f"{self.source}:{number}: {message}")
@@ -76,6 +91,12 @@ class _Document:
         if place is None:
             kind = "tree" if (self.root / found).is_dir() else "blob"
             return f"{REPOSITORY}/{kind}/{BRANCH}/{found}{mark}{heading}"
+        if found.endswith(".mp4") and place not in self.videos:
+            self.videos.append(place)
+        if posixpath.dirname(found) == PICTURES and found.endswith(".png"):
+            name = posixpath.basename(found)[: -len(".png")]
+            if not (self.root / LIVE / f"{name}.html").is_file():
+                self.problem(number, f"the diagram `{name}` has no live page: run `diagc publish` first")
         return f"{place}{mark}{heading}"
 
     def line(self, text: str, number: int) -> str:
@@ -88,7 +109,19 @@ class _Document:
 
         text = CODE_SPAN.sub(keep, text)
         text = TARGET.sub(lambda m: f"]({self.target(m.group(1), number)}{m.group(2) or ''})", text)
+        text = PICTURE.sub(r"[![\1](diagrams/static/\2.png)](diagrams/html/\2.html)", text)
         return re.sub(r"\x00(\d+)\x00", lambda m: spans[int(m.group(1))], text)
+
+    def players(self) -> list[str]:
+        """The players for the block that just ended, each as a block of its own."""
+        out: list[str] = []
+        for video in self.videos:
+            subtitles = video[: -len(".mp4")] + ".vtt"
+            source = next(folder + video[len(place):] for folder, place in FOLDERS.items() if video.startswith(place + "/"))
+            has = (self.root / (source[: -len(".mp4")] + ".vtt")).is_file()
+            out += ["", player(video, subtitles if has else None)]
+        self.videos = []
+        return out
 
 
 def rewrite(text: str, source: str, root: Path) -> tuple[str, list[str]]:
@@ -111,5 +144,10 @@ def rewrite(text: str, source: str, root: Path) -> tuple[str, list[str]]:
             continue
         if DEFINITION.match(line):
             document.problem(number, "a link definition is not checked: write the link inline, as `[text](target)`")
+        if not line.strip():
+            out += document.players()
+            out.append(line)
+            continue
         out.append(document.line(line, number))
+    out += document.players()
     return "\n".join(out) + "\n", document.problems
