@@ -18,7 +18,7 @@ from ..probe import cut_outline
 from ..runner import Interrupt, PageReport, StepFailed
 from ..storyboard import MARK_ACTIONS, Action, Locator, Pace, Storyboard
 from ..tools import action_timeout, docker_command
-from . import images, takelog
+from . import images, profiles, takelog, viewer
 from .link import HelperError, open_link
 from .takelog import Move, Shown, TakeLog
 
@@ -86,10 +86,6 @@ def _missing(reply: dict) -> str:
     if nearest:
         text += f". The nearest {'words' if screen else 'names'}: " + ", ".join(f'"{words}"' for words in nearest)
     return text
-
-
-def _later(what: str) -> RunError:
-    return RunError(f"{what} of a desktop app is not built yet: `howto probe` is")
 
 
 class DesktopStage:
@@ -510,29 +506,78 @@ def _copyable(line: dict) -> str:
 
 
 @contextmanager
-def open_stage(
-    storyboard: Storyboard, *, interrupt: Interrupt | None = None, shots: Path | None = None
-) -> Iterator[DesktopStage]:
-    """A container with the storyboard's app started, and its first window filling the monitor."""
-    if storyboard.profile:
-        raise _later("a profile")
+def _container(storyboard: Storyboard, *, scale: int, profile: str | None, publish: int | None) -> Iterator[tuple]:
+    """A container with the storyboard's app started, and its first window filling the monitor.
+
+    Yields the link, what `start` answered, and the time limit of an action. `profile` names the
+    volume that is the app's home, and `publish` a port of the container that Docker serves on this machine.
+    """
     docker = docker_command()
     images.check(docker, storyboard.app.image)
     timeout = action_timeout()
     width, height = storyboard.viewport
-    link = open_link(docker, storyboard.app.image)
+    link = open_link(docker, storyboard.app.image, volume=profiles.volume(profile) if profile else None, publish=publish)
     try:
         try:
             started = link.request(
                 "start", limit=3 * timeout + 2 * QUICK, run=storyboard.app.run, width=width, height=height,
-                scale=scale_of(storyboard), timeout=3 * timeout,
+                scale=scale, timeout=3 * timeout,
             )
         except HelperError as exc:
             raise RunError(str(exc)) from None
         # What runs is what counts: the label of the image said the same a moment ago, unless the image was replaced.
         images.check(docker, storyboard.app.image, built=started.get("build", ""))
-        yield DesktopStage(
-            link, storyboard, timeout=timeout, first=started.get("title", ""), interrupt=interrupt, shots=shots
-        )
+        yield link, started, timeout
     finally:
         link.close()
+
+
+def _watch(link, *, view_only: bool, open_viewer):
+    """Has the helper show its monitor, and opens the window on it."""
+    try:
+        shown = link.request("show", limit=4 * QUICK, view_only=view_only)
+    except HelperError as exc:
+        raise RunError(f"the desktop failed: {exc}") from None
+    return open_viewer(viewer.address(link.port(viewer.PORT), shown["password"], view_only=view_only))
+
+
+def login(storyboard: Storyboard, profile: str, *, open_viewer=viewer.Viewer) -> None:
+    """Starts the app of a storyboard on a profile, and shows it until the person closes the window.
+
+    The profile is made when it is new. The monitor has the size of the picture, whatever the
+    storyboard zooms: a sign-in needs no larger one.
+    """
+    profiles.create(docker_command(), profile)
+    with _container(storyboard, scale=1, profile=profile, publish=viewer.PORT) as (link, _, _):
+        window = _watch(link, view_only=False, open_viewer=open_viewer)
+        try:
+            window.wait()
+        finally:
+            window.close()
+
+
+@contextmanager
+def open_stage(
+    storyboard: Storyboard, *, interrupt: Interrupt | None = None, shots: Path | None = None, show: bool = False,
+    open_viewer=viewer.Viewer,
+) -> Iterator[DesktopStage]:
+    """The stage of a desktop storyboard: its app in a container, on its profile when it names one."""
+    if storyboard.profile and not profiles.exists(docker_command(), storyboard.profile):
+        # Before the container: Docker makes a volume that a container names, and it would be an empty home.
+        raise RunError(
+            f"profile `{storyboard.profile}` does not exist: "
+            f"run `howto login {storyboard.profile} {storyboard.origin}`"
+        )
+    publish = viewer.PORT if show else None
+    with _container(storyboard, scale=scale_of(storyboard), profile=storyboard.profile, publish=publish) as (
+        link, started, timeout,
+    ):
+        # A watcher cannot disturb the steps: the server of the window takes no input.
+        window = _watch(link, view_only=True, open_viewer=open_viewer) if show else None
+        try:
+            yield DesktopStage(
+                link, storyboard, timeout=timeout, first=started.get("title", ""), interrupt=interrupt, shots=shots
+            )
+        finally:
+            if window is not None:
+                window.close()
