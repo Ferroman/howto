@@ -136,3 +136,14 @@ def test_the_picture_goes_in_on_a_dot_and_out_again_without_a_shake(ffmpeg, tmp_
         # the dot may be 2.5 pixels from where the arithmetic puts it: nobody sees that while the picture moves.
         allowed = 2.5 if moving else 0.0
         assert abs(x - wanted[0]) <= allowed and abs(y - wanted[1]) <= allowed, (frame, (x, y), wanted)
+
+
+def test_what_follows_the_overlay_is_one_chain_with_it():
+    layer = Layer(LOG, Path("/work/overlay/frames.txt"))
+    assert graph(layer, "crop=324:424:948:88,fps=12.5,mpdecimate") == (
+        "[0:v]fps=25[base];[base][1:v]overlay=0:0:eof_action=repeat,crop=324:424:948:88,fps=12.5,mpdecimate[v]"
+    )
+
+
+def test_what_follows_a_take_that_shows_nothing_follows_its_frame_rate():
+    assert graph(Layer(LOG), "fps=12.5,mpdecimate") == "[0:v]fps=25,fps=12.5,mpdecimate[v]"
