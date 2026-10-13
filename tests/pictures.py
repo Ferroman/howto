@@ -65,3 +65,13 @@ def webp(path):
             times.append(int.from_bytes(body[12:15], "little"))
         at += 8 + length + (length & 1)
     return canvas, times, loops
+
+
+def alpha(ffmpeg, picture, *, x, y, width, height):
+    """How opaque one region of a picture is, from 0 (see-through) to 255."""
+    raw = subprocess.run(
+        [ffmpeg, "-loglevel", "error", "-i", str(picture),
+         "-vf", f"alphaextract,crop={width}:{height}:{x}:{y},scale=1:1:flags=area,format=gray", "-f", "rawvideo", "-"],
+        capture_output=True, check=True,
+    ).stdout
+    return raw[0]
