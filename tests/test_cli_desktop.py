@@ -1,8 +1,16 @@
 """`howto probe` on a desktop storyboard, from the command to the report. These tests need Docker and the base image."""
+import json
+
 import pytest
 import yaml
 
+from pictures import brightness, dimensions
 from howto import cli
+from howto.assemble import video_duration
+from howto.desktop import takelog
+from howto.desktop.stage import PRESS
+from howto.errors import RunError
+from howto.tools import find_tool
 
 pytestmark = pytest.mark.desktop
 
@@ -89,3 +97,81 @@ def test_an_image_that_does_not_exist_exits_1_with_the_command_that_builds_it(de
     path.write_text(path.read_text().replace(desktop.image, "howto-no-such-image"), encoding="utf-8")
     assert cli.main(["probe", str(path)]) == 1
     assert "the image howto-no-such-image does not exist: run `docker build -t howto-no-such-image DIR`" in capsys.readouterr().err
+
+
+import json
+
+from pictures import brightness, dimensions
+
+from howto.assemble import video_duration
+from howto.desktop import takelog
+from howto.desktop.stage import PRESS
+from howto.errors import RunError
+from howto.tools import find_tool
+
+
+@pytest.fixture
+def real_ffmpeg(monkeypatch):
+    monkeypatch.delenv("HOWTO_FFMPEG", raising=False)
+    monkeypatch.delenv("HOWTO_FFPROBE", raising=False)
+    try:
+        return find_tool("ffmpeg", "HOWTO_FFMPEG"), find_tool("ffprobe", "HOWTO_FFPROBE")
+    except RunError:
+        pytest.skip("ffmpeg is not installed")
+
+
+def whole(video):
+    """The brightness of the whole picture of 1280x720, for every frame."""
+    return brightness(video, x=0, y=0, width=1280, height=720)
+
+
+def test_a_render_gives_a_narrated_video_of_the_app(desktop, chromium, fake_tts, real_ffmpeg, sandbox, tmp_path):
+    _, ffprobe = real_ffmpeg
+    steps = [
+        {"chapter": "Add a name"},
+        {"say": "Type a name.", "note": "Any name will do, as long as it is a short one.",
+         "do": [{"fill": {"label": "Name", "value": "sam"}}]},
+        {"say": "Then press Add.", "do": [{"click": {"role": "button", "name": "Add"}}]},
+    ]
+    path = write_board(tmp_path, desktop, steps)
+    assert cli.main(["render", str(path), "--keep-work"]) == 0
+    video = path.parent / "add.mp4"
+    assert dimensions(ffprobe, video) == (1280, 720)
+    (work,) = sandbox.work.iterdir()
+    timeline = json.loads((work / "timeline.json").read_text())
+    assert video_duration(ffprobe, video) == pytest.approx(timeline["video_duration"], abs=0.1)
+    assert (path.parent / "add.srt").read_text().count(" --> ") == 2
+    log = takelog.read(work / "take.json")
+    assert [shown.kind for shown in log.shown] == ["card", "click", "note", "click"]
+    assert 0.0 < log.head < 5.0
+    # The app paints that part of its window white. The title card is dark, with white words, in the middle of it.
+    middle = brightness(video, x=560, y=335, width=160, height=50)
+    assert middle[25] < 180 and middle[-1] > 200
+    # The note lies at the bottom while its step lasts, and is gone at the end.
+    second = timeline["steps"][1]
+    bottom = brightness(video, x=560, y=625, width=160, height=40)
+    assert bottom[round((second["start"] + 1.0) * 25)] < 180 and bottom[-1] > 200
+
+
+def test_the_picture_of_a_desktop_video_is_within_a_tenth_of_a_second_of_its_timeline(
+    desktop, chromium, fake_tts, real_ffmpeg, sandbox, tmp_path
+):
+    steps = [{"say": "Press Flash.", "do": [{"click": {"role": "button", "name": "Flash"}}], "pause": 1}]
+    path = write_board(tmp_path, desktop, steps)
+    assert cli.main(["render", str(path), "--keep-work"]) == 0
+    (work,) = sandbox.work.iterdir()
+    (ring,) = takelog.read(work / "take.json").shown
+    # The painted part of the window turns from white to black when the button is let go.
+    levels = whole(path.parent / "add.mp4")
+    turned = next(index for index, level in enumerate(levels) if level < levels[0] - 40) / 25
+    assert turned == pytest.approx(ring.start + PRESS, abs=0.1)
+
+
+def test_a_failed_step_of_a_desktop_take_writes_no_video(desktop, chromium, fake_tts, real_ffmpeg, sandbox, tmp_path, capsys, monkeypatch):
+    monkeypatch.setenv("HOWTO_ACTION_TIMEOUT", "3")
+    steps = [{"say": "Press Remove.", "do": [{"click": {"role": "button", "name": "Remove"}}]}]
+    path = write_board(tmp_path, desktop, steps)
+    assert cli.main(["render", str(path)]) == 1
+    assert 'howto: step 1: click role=button name="Remove": not in the tree' in capsys.readouterr().err
+    assert not (path.parent / "add.mp4").exists()
+    assert list(sandbox.work.iterdir()) == []

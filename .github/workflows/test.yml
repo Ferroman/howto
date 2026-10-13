@@ -43,9 +43,14 @@ jobs:
     env:
       # A desktop test that is skipped is not a pass.
       HOWTO_REQUIRE_DESKTOP: "1"
+      HOWTO_REQUIRE_BROWSER: "1"
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.3.0
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      - name: Install Chromium
+        run: uv run --extra test playwright install --with-deps chromium
       - name: Build the base image
         run: uv run howto image
       - name: Desktop tests

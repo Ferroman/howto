@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from howto.desktop import takelog
+from howto.desktop.takelog import Shown, TakeLog
 from howto.runner import PageReport, StepFailed
 from howto.zoom import Box
 
@@ -129,6 +131,17 @@ class FakeStage:
         self.calls.append("report")
         self.report_args = (within, max_chars)
         return PageReport(url="http://demo.test/end", title="End", outline='- heading "End" [level=1]')
+
+
+FAKE_LOG = TakeLog(viewport=(1920, 1080), head=0.7, shown=(Shown("note", 0.0, 1.0, "<div>Hi</div>"),))
+
+
+class FakeDesktopStage(FakeStage):
+    """A stage that also leaves the log of a take beside its recording, as the desktop stage does."""
+
+    def start_recording(self, path) -> None:
+        super().start_recording(path)
+        takelog.write(FAKE_LOG, takelog.beside(Path(path)))
 
 class ScriptedLink:
     """Stands in for the link to the helper: a list of the requests it expects, and the reply to each.

@@ -176,6 +176,24 @@ def _record(storyboard: Storyboard, clips, video: Path, *, animated: bool = Fals
     return result
 
 
+def draw_overlay(log, length: float, out_dir: Path):
+    """Draws what lies over the recording of a desktop take. The tests replace this name."""
+    from .overlay import draw as real
+
+    return real(log, length, out_dir)
+
+
+def _layer(storyboard: Storyboard, video: Path, length: float, work: Path):
+    """What a desktop take lays on its recording: its log, and the pictures of its notes. None for a web take."""
+    if not storyboard.desktop:
+        return None
+    from .desktop import takelog
+    from .desktop.picture import Layer
+
+    log = takelog.read(takelog.beside(video))
+    return Layer(log, draw_overlay(log, length, work / "overlay"))
+
+
 def cmd_render(args: argparse.Namespace) -> int:
     storyboard = load(Path(args.storyboard))
     ffmpeg = find_tool("ffmpeg", "HOWTO_FFMPEG")
@@ -185,7 +203,7 @@ def cmd_render(args: argparse.Namespace) -> int:
     work = _work_dir(storyboard)
     keep = args.keep_work
     try:
-        video = work / "capture.webm"
+        video = work / ("capture.mkv" if storyboard.desktop else "capture.webm")
         result = _record(storyboard, clips, video)
         try:
             outputs = assembling.assemble(
@@ -197,6 +215,7 @@ def cmd_render(args: argparse.Namespace) -> int:
                 work=work,
                 ffmpeg=ffmpeg,
                 ffprobe=ffprobe,
+                layer=_layer(storyboard, video, assembling.length_of(result.timeline), work),
             )
         except RunError:
             keep = True
@@ -217,6 +236,8 @@ def _file_size(path: Path) -> str:
 
 def cmd_animate(args: argparse.Namespace) -> int:
     storyboard = load(Path(args.storyboard))
+    if storyboard.desktop:
+        raise RunError("`howto animate` of a desktop app is not built yet")
     if args.width < 1:
         raise StoryboardError("--width must be 1 or more")
     formats = FORMATS if args.format == "both" else (args.format,)
