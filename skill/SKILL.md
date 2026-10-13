@@ -270,7 +270,7 @@ screenshot: /home/sam/.cache/howto/probe/export.png
 ```
 
 - **The outline lists every window that is showing**, each with what is in it, by role and name. The window that has the keyboard is marked `[active]`. A dialog is one more window in the list, and so is a menu that is open.
-- **The words are what the screen shows and the outline lacks**: the text of a canvas, or of a control that the app drew itself. Each line ends with a locator that you can copy as it stands.
+- **The words are what the screen shows and the outline lacks**: the text of a canvas, or of a control that the app drew itself. Each line ends with a locator that you can copy as it stands. The screen reading is not trusted: it reads a word only when the word is large and plain, so prefer the outline whenever it has the element.
 - **The screenshot is for a person.** The text of the report is enough to write a storyboard.
 - **`--until`, `--within` and `--max-chars` work as on a web page.** `--within` takes a locator of the outline.
 
@@ -280,7 +280,7 @@ Use the first form in this list that identifies the element:
 
 1. `role` with `name`, as the outline prints them: `{role: button, name: Save}`. The name matches a part of the control's name, without regard to case.
 2. `label`, for a field that a label names: `{label: Email address}`.
-3. `text`: `{text: Export}`. It is looked up in the outline first. When the outline does not have the words, they are read off the screen, so it also finds what the report lists under `words on the screen`.
+3. `text`: `{text: Export}`. It is looked up in the outline first. When the outline does not have the words, they are read off the screen, so it also finds what the report lists under `words on the screen`. The screen reads only large plain words, so a `text` that the outline does not have is a guess for small text: use `at` with `size` instead.
 4. `at`, a point of the picture: `{at: 960x540}`. With `size` it is an area whose top left corner is `at`: `{at: 900x500, size: 120x40}`. A click goes to the middle of an area.
 
 - **`exact: true`, `nth` and `within` narrow a locator**, as on a web page. `within` takes a locator of the outline.
@@ -304,6 +304,8 @@ Use the first form in this list that identifies the element:
 - **A menu takes two clicks**: the menu, then the item. Probe with `--until` after the first click to read the names of the items.
 - **The home of the app is new for every run** unless the storyboard has a `profile`. What a step saves is gone at the next probe, so `cleanup` rarely has work to do.
 - **`zoom` is written as on a web page.** Every place stays in pixels of the picture.
+- **A mark on a GTK 4 app lands in the top-left corner**: its boxes are not in monitor coordinates. For a mark on such an app, use `{at: ..., size: ...}`.
+- **A character that the keyboard has no key for is pressed by its Unicode keysym name**, such as `U00E9` for `é`.
 
 ### What a failed step says
 
