@@ -1,0 +1,5 @@
+Notes for the next release
+
+The colour of a link is the accent colour of the theme.
+A dark theme has a lighter colour for the same link.
+Nobody chooses a colour by hand.

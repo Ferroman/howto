@@ -2,7 +2,10 @@
 import argparse
 import functools
 import http.server
+import io
 import re
+import subprocess
+import tarfile
 import threading
 from pathlib import Path
 
@@ -17,6 +20,7 @@ DOCUMENTS = ("README.md", "docs/guide.md", "skill/SKILL.md")
 BOARDS = sorted(EXAMPLES.glob("*.yaml"))
 # Where the README's quick start serves the demo page.
 ADDRESS = "http://localhost:8000"
+DESKTOP = EXAMPLES / "desktop"
 
 
 def test_the_examples_are_the_ones_the_readme_names():
@@ -144,3 +148,33 @@ def test_an_example_runs_on_the_demo_page(path, chromium, example_site, sandbox,
     # A note would mean a dialog that was dismissed, a zoom that was skipped, or an element outside the crop.
     assert "note:" not in out
     assert "Invitation sent to sam@example.com" in out
+
+def test_the_desktop_example_is_a_storyboard_of_six_steps_for_its_image():
+    storyboard = load(DESKTOP / "replace.yaml")
+    assert storyboard.desktop and storyboard.app.image == "howto-gedit"
+    assert storyboard.app.run == "gedit /home/howto/notes.txt"
+    assert len(storyboard.steps) == 6
+    # Nothing that a person has to make first: no profile and no voice.
+    assert storyboard.profile is None and storyboard.voice is None
+
+
+@pytest.mark.desktop
+def test_the_desktop_example_runs_in_its_image(desktop, sandbox, capsys):
+    # The image is built as the README builds it, from the folder of the example. It goes in as a tar on stdin.
+    data = io.BytesIO()
+    with tarfile.open(fileobj=data, mode="w") as tar:
+        for path in sorted(DESKTOP.iterdir()):
+            tar.add(path, arcname=path.name)
+    built = subprocess.run([*desktop.docker, "build", "-q", "-t", "howto-gedit", "-"], input=data.getvalue(), capture_output=True)
+    assert built.returncode == 0, built.stderr.decode("utf-8", "replace")[-2000:]
+    assert cli.main(["probe", str(DESKTOP / "replace.yaml")]) == 0
+    out = capsys.readouterr().out
+    assert "step 6 ok" in out and "note:" not in out
+
+def test_the_image_of_the_desktop_example_starts_from_the_base_image():
+    lines = (DESKTOP / "Dockerfile").read_text(encoding="utf-8").splitlines()
+    assert "FROM howto-desktop" in lines
+    # The app runs as `howto`, and saves the document: the document is that user's.
+    assert any(line.startswith("COPY --chown=howto:howto notes.txt ") for line in lines)
+    assert "colour" in (DESKTOP / "notes.txt").read_text(encoding="utf-8")
+
