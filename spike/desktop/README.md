@@ -87,6 +87,14 @@ Qt draws its window at half the size it should be at `QT_SCALE_FACTOR=2` with
 doubled pixels rather than larger text. Only GTK apps scale as the plan
 expected, and only when their boxes are read in monitor coordinates.
 
+The second window manager, metacity, does not change any of this. Its title
+bar is 37 px at both scales, and the controls stay in the same place for the
+same apps as with openbox (56 of 58 for the calculator, 4 of 7 for gedit, none
+for Qt and Electron). Its unit cannot be worked out from the tree at all: the
+first node of the tree is not the window, so the frame it reports is one pixel
+wide and the unit comes out as 3840 rather than 2. openbox stays the window
+manager.
+
 ## Zoom
 
 All three ways pass with both ffmpeg releases: the picture stays still at rest
@@ -126,12 +134,16 @@ see-through, and a mark appears where it should.
 
 The animation itself works: the pictures show a mark drawing itself, a ring
 spreading and a note staying sharp
-(`spike-out/desktop/overlay/laid.mp4`), so the plan's paragraph about marks
-that need animation stands.
+(`spike-out/desktop/overlay/laid.mp4`). It is not used: the measurement missed
+its mark, so a mark, a ring and a title card appear at once, and the layer is
+one picture for each moment at which something changes. `overlay.py` can still
+step an animation for whatever animates.
 
 ## What the plan changes because of these numbers
 
-- The zoom is built from a recording of 1920x1080, not 4K.
+- A zoom is still cut from the larger recording, but a picture of 1920x1080
+  cannot be zoomed on this machine: its doubled recording misses the mark, so
+  a zoom is reliable for a smaller picture.
 - A mark is drawn from the tree only for a toolkit whose boxes are in monitor
   coordinates (GTK 3). For GTK 4 the boxes are wrong, so a mark on a GTK 4 app
   lands in the corner.
@@ -140,4 +152,21 @@ that need animation stands.
 - A title bar does not scale, so a picture of a scaled app mixes one height of
   decoration with doubled content.
 - The overlay of a long take takes about 13 s, so a take with many marks is
-  slower than the plan's 10 s.
+  slower than the plan's 10 s. Marks, rings and cards appear at once instead of
+  being stepped frame by frame, which is what the code does.
+
+## What the build takes from this
+
+| Setting | Value | Where it goes |
+|---|---|---|
+| The environment that makes an app publish its tree | `A11Y_ENV` as it stands; nothing was added, because Qt publishes no tree even with `QT_ACCESSIBILITY=1` | `src/howto/desktop/helper/session.py` |
+| The window manager | openbox | `src/howto/desktop/helper/session.py` and the Dockerfile |
+| The time to read a tree | 0.05 s for the largest of the four (gnome-calculator, 98 nodes) | The helper reads the tree once per request, so there is no pause between two looks; the wait of an action is the only pause |
+| The command of the recording | `-crf 12` | `src/howto/desktop/helper/record.py` |
+| The clock of ffmpeg's `start:` | wall | `first_frame` in the same file handles both, so this is a check |
+| The settings for twice the scale | `SCALE_ENV` as it stands, with `Xft.dpi: 192` | `src/howto/desktop/helper/session.py` |
+| The unit of the boxes at twice the scale | GTK 3: 2, GTK 4: 2, Qt: 0, Electron: 2 | `src/howto/desktop/helper/desk.py` works it out for each app from its window |
+| The way to make a zoom | `zoompan` | `src/howto/desktop/picture.py` |
+| How much a screenshot is enlarged before it is read | x2 | `src/howto/desktop/helper/screen.py` |
+| The mode of tesseract | 11 | The same file |
+| Marks with their animation | no: each appears at once | `src/howto/overlay.py` |

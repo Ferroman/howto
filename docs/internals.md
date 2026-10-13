@@ -134,7 +134,7 @@ A termination signal (SIGTERM) does the same when it is sent to `howto` alone. S
 | `src/howto/errors.py` | The errors that end a command, each with its exit code |
 | `skill/SKILL.md` | The storyboard format, written for an agent |
 | `examples/` | A demo page and two storyboards for it, and in `desktop/` an app in an image with its storyboard |
-| `spike/` | The measurements made before the build. `desktop/` has the ones of the desktop |
+| `spike/` | The measurements made before the build. `spike/desktop/` has the ones for desktop apps, with their results |
 | `.diagrams/src/` | The diagrams of the README and of this page, as [diagc](https://github.com/Ferroman/diagc) sources. `diagc publish` writes the pictures to `.diagrams/static/` |
 | `scripts/build_site.py` | Stages the documents for [the site](https://ferroman.github.io/howto/): their names there, their links, a player for each video and a link to each live diagram |
 | `zensical.toml` | The name, the menu and the theme of the site, for Zensical |

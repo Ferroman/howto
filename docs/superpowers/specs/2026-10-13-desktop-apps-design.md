@@ -4,11 +4,11 @@
 
 ## What the measurements changed
 
-The numbers are in [spike/desktop/README.md](../../spike/desktop/README.md). Three claims of this document changed.
+The numbers are in [spike/desktop/README.md](../../../spike/desktop/README.md). Three claims of this document changed.
 
 1. **A zoom built from a 4K recording is not reliable on every machine.** The measured 4K recording lost 1.45 % and 1.69 % of its frames against a mark of 1 %, and its first frames were 200-240 ms late against a mark of 0.1 s. The code still records the monitor at twice the size, and the plan's warning that a small machine can fail to hold 25 frames a second is now a measured fact rather than a guess.
 2. **The screen reading is not trusted as a locator.** Tesseract read 4.3 % of the words at best against a mark of 90 %, so a `{text: ...}` locator that the tree does not have names only a large plain piece of text. The probe report prints the words it did read, and a step that needs a word the screen did not give still fails.
-3. **Marks keep their animation, but a long take costs more than the mark.** The pictures show a mark drawing itself and a ring spreading, so the animation stays. Chromium drew the 321 pictures of a 60 s take in 13.0 s against a mark of 10 s.
+3. **Marks are drawn without their animation.** Chromium drew the 321 pictures of a 60 s take in 13.0 s against a mark of 10 s, so the layer is one picture for each moment at which something changes and a mark, a ring and a title card appear at once. The animation itself works — the pictures show a mark drawing itself and a ring spreading — and `overlay.py` can still step it for whatever animates.
 
 Two more claims changed as the numbers came in:
 
@@ -147,6 +147,7 @@ steps:
 - **`nth`, `exact` and `within` work as on a web page.** `within` takes a locator of the tree.
 - **`placeholder`, `testid` and `css` are refused** in a desktop storyboard. `at` and the action `run` are refused in a web storyboard. The message names the step and the field, and says what the storyboard can use.
 - **Only what is showing matches.** An element counts when the tree says that it is showing and its box is on the monitor.
+- **A box of the tree is a place only for a toolkit that reports it in monitor coordinates.** Measured: GTK 3 gives boxes that land on their control; GTK 4 names plenty of controls but every box starts at the window origin, so a mark on a GTK 4 app lands in the top-left corner; Qt publishes no tree at all, so its elements are found by reading the screen.
 - **More than one match fails**, with the count, as on a web page: `2 elements match`. The author adds `exact`, `nth` or `within`.
 - **Roles have the names that a web outline uses.** AT-SPI says `push button`, `menu item`, `check box` and `text`. The helper maps them to `button`, `menuitem`, `checkbox` and `textbox`, so one skill teaches both kinds of storyboard. A role with no web name keeps its AT-SPI name.
 
@@ -241,7 +242,7 @@ A page enlarges itself and draws its text again at the new size. An app cannot. 
 - **The wide picture is the recording at half its size. A zoom of 2 is a cut of the recording at its own size**, so its text is as sharp as on a web page. Above 2 the cut is enlarged and softens. The limit stays at 4.
 - **ffmpeg makes the move.** `zoom.py` says which part of the picture a zoom shows, with the arithmetic it has now. The assembly turns the zooms of the log into one `zoompan` expression. A move takes as long as on a web page.
 - **Notes and marks are laid on after the zoom**, in picture pixels, as the browser stage has them. A mark keeps the width of its stroke and goes around the enlarged control. `runner.py` already takes the marks away before the picture moves, so no new rule is needed.
-- **A storyboard without a zoom keeps a monitor of the picture's own size.** A recording of 3840x2160 costs four times the work, and a small machine can fail to hold 25 frames a second.
+- **A storyboard without a zoom keeps a monitor of the picture's own size.** A recording of 3840x2160 costs four times the work, and a small machine can fail to hold 25 frames a second. Measured: the 4K recording lost 1.45 % and 1.69 % of its frames against a mark of 1 %, and its first frames were 200-240 ms late against a mark of 0.1 s, while 1080p lost none.
 - **A probe uses the monitor that the take will use.**
 
 Three things differ from a web page:
