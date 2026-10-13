@@ -97,12 +97,19 @@ def match(
         scopes = [(below(scope), window) for scope, window in match(windows, locator["within"], picture, hidden)]
     else:
         scopes = [(iter((window, *below(window))), window) for window in windows]
+    seen_keys: list[object] = []
     found: list[tuple[Node, Node]] = []
     for candidates, window in scopes:
         for node in candidates:
-            if not fits(node, locator) or any(node is seen for seen, _ in found):
+            if not fits(node, locator):
+                continue
+            # The same element can be reached twice: an open menu is a child of the control that owns it
+            # and at the same time a window of its own on the bus.
+            key = node.ref if node.ref is not None else node
+            if any(key is seen for seen in seen_keys):
                 continue
             if hidden or (node.showing and on_picture(node.box, picture)):
+                seen_keys.append(key)
                 found.append((node, window))
     if "text" in locator:
         # The smallest element that has the words, as on a web page, and not the ones around it.

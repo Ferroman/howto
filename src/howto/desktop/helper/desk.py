@@ -5,15 +5,17 @@ import os
 import subprocess
 import time
 
-from . import atspi, keys, pointer, tree, xinput
+from . import atspi, keys, pointer, screen, tree, xinput
 from .protocol import Refusal
+from .record import Recorder
 from .session import Session
 
 # Seconds between two looks at the tree while `find` waits.
 LOOK_EVERY = 0.25
 # Milliseconds between two keys when nothing is being shown. With no pause at all xdotool loses keys.
 QUICK_KEY_MS = 1
-REQUESTS = ("start", "find", "pointer", "click", "type", "key", "scroll_to", "run", "outline")
+REQUESTS = ("start", "find", "pointer", "click", "type", "key", "scroll_to", "run", "outline",
+           "record_start", "record_stop", "screenshot", "words")
 
 
 def _with(why: str, said: str) -> str:
@@ -24,11 +26,13 @@ class Desk:
     def __init__(self) -> None:
         self.session: Session | None = None
         self.picture = (0, 0)
+        self.recorder = Recorder()
 
     def handlers(self) -> dict:
         return {name: getattr(self, name) for name in REQUESTS}
 
     def stop(self) -> None:
+        self.recorder.abandon()
         if self.session is not None:
             self.session.stop()
 
@@ -70,9 +74,54 @@ class Desk:
             self._gone()
             time.sleep(LOOK_EVERY)
 
+    def _places(self, lines: list, locator: dict, windows: list) -> list:
+        """Where the words of a `text` locator are on the screen, narrowed as the locator says."""
+        places = screen.spot(lines, locator["text"], bool(locator.get("exact")))
+        if locator.get("within") is not None:
+            inside = [element.box for element, _ in tree.match(windows, locator["within"], self.picture)]
+            places = [
+                place for place in places
+                if any(
+                    box is not None
+                    and box[0] <= place[0] + place[2] / 2 <= box[0] + box[2]
+                    and box[1] <= place[1] + place[3] / 2 <= box[1] + box[3]
+                    for box in inside
+                )
+            ]
+        nth = locator.get("nth")
+        return places if nth is None else places[nth:nth + 1]
+
+    def _seek(self, locator: dict, seconds: float) -> tuple[list, list, list, list]:
+        """Looks in the tree, and for `text` then on the screen, until something is found or the time is over.
+
+        Returns the elements of the tree, the places on the screen, the windows, and the lines that were read.
+        """
+        end = time.monotonic() + seconds
+        while True:
+            windows = self._windows()
+            found = tree.match(windows, locator, self.picture)
+            lines, places = [], []
+            if not found and "text" in locator:
+                lines = screen.read(screen.shot(*self.picture))
+                places = self._places(lines, locator, windows)
+            if found or places or time.monotonic() >= end:
+                return found, places, windows, lines
+            self._gone()
+            time.sleep(LOOK_EVERY)
+
+    def _hidden(self, locator: dict, seconds: float) -> dict:
+        """What `find` answers for an element that need not be showing: the tree only."""
+        found, _ = self._look(locator, seconds, True)
+        if len(found) != 1:
+            return {"count": len(found), "tried": ["tree"], "nearest": []}
+        element, window = found[0]
+        return {"count": 1, "box": list(element.box or (0.0, 0.0, 0.0, 0.0)), "layer": "tree", "window": tree.tidy(window.name)}
+
     def find(self, q: dict) -> dict:
         locator = q["locator"]
-        found, windows = self._look(locator, q["timeout"], bool(q.get("hidden")))
+        if q.get("hidden"):
+            return self._hidden(locator, q["timeout"])
+        found, places, windows, lines = self._seek(locator, q["timeout"])
         if len(found) == 1:
             element, window = found[0]
             return {
@@ -81,10 +130,19 @@ class Desk:
             }
         if found:
             return {"count": len(found)}
+        if len(places) == 1:
+            # A place on the screen belongs to no window that the tree knows, so nothing checks what covers it.
+            return {"count": 1, "box": list(places[0]), "layer": "screen", "window": ""}
+        if places:
+            return {"count": len(places)}
         self._gone()
         wanted = locator.get("name") or locator.get("label") or locator.get("text") or locator.get("option") or ""
         heard = tree.names(windows, locator, self.picture)
-        return {"count": 0, "tried": ["tree"], "nearest": tree.nearest(wanted, heard) if wanted else []}
+        tried = ["tree"]
+        if "text" in locator:
+            tried.append("screen")
+            heard += [line.text for line in lines] + [word for line in lines for word, _ in line.words]
+        return {"count": 0, "tried": tried, "nearest": tree.nearest(wanted, heard) if wanted else []}
 
     def pointer(self, q: dict) -> dict:
         target = (round(q["x"]), round(q["y"]))
@@ -98,9 +156,10 @@ class Desk:
             managed = self.session.windows()
             mine = {int(window.id, 16) for window in managed if window.title == title}
             under = xinput.window_under_pointer()
-            covering = next((window for window in managed if int(window.id, 16) == under), None)
+            related = xinput.related(under)
+            covering = next((window for window in managed if int(window.id, 16) in related), None)
             # A menu or a list that hangs over the window is not in the window manager's list, and covers nothing.
-            if mine and covering is not None and under not in mine:
+            if mine and covering is not None and int(covering.id, 16) not in mine:
                 raise Refusal("covered", f'another window covers it: "{covering.title}"')
         xinput.press(q.get("hold", 0))
         return {}
@@ -140,6 +199,34 @@ class Desk:
             return {"timed_out": True}
         lines = (proc.stdout + proc.stderr).strip().splitlines()
         return {"code": proc.returncode, "output": "\n".join(lines[-8:])}
+
+    def record_start(self, q: dict) -> dict:
+        return {"first_frame": self.recorder.start(*self.picture)}
+
+    def record_stop(self, q: dict) -> dict:
+        return {"path": self.recorder.stop()}
+
+    def screenshot(self, q: dict) -> dict:
+        return {"path": screen.shot(*self.picture)}
+
+    def words(self, q: dict) -> dict:
+        """The lines of words on the screen. With `lacking`, only the words that the tree does not have."""
+        lines = screen.read(q.get("shot") or screen.shot(*self.picture))
+        windows = self._windows()
+        if q.get("lacking"):
+            lines = screen.lacking(lines, windows, self.picture)
+        if q.get("within") is not None:
+            inside = [element.box for element, _ in tree.match(windows, q["within"], self.picture)]
+            lines = [
+                line for line in lines
+                if any(
+                    box is not None
+                    and box[0] <= line.box[0] + line.box[2] / 2 <= box[0] + box[2]
+                    and box[1] <= line.box[1] + line.box[3] / 2 <= box[1] + box[3]
+                    for box in inside
+                )
+            ]
+        return {"lines": [{"text": line.text, "box": list(line.box)} for line in lines]}
 
     def outline(self, q: dict) -> dict:
         windows = self._windows()

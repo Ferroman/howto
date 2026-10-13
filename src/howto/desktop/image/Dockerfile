@@ -5,7 +5,8 @@ FROM ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive LANG=C.UTF-8
 RUN apt-get update && apt-get install -y --no-install-recommends \
       xvfb x11-xserver-utils x11-utils xdotool wmctrl openbox \
-      dbus at-spi2-core python3 python3-gi gir1.2-atspi-2.0 libgl1-mesa-dri \
+      dbus at-spi2-core python3 python3-gi gir1.2-atspi-2.0 libgl1-mesa-dri ffmpeg \
+      tesseract-ocr tesseract-ocr-eng python3-pil \
       fonts-dejavu-core fonts-liberation fonts-noto-core fontconfig \
       adwaita-icon-theme hicolor-icon-theme ca-certificates \
  && rm -rf /var/lib/apt/lists/* \
