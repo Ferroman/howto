@@ -110,6 +110,12 @@ A picture of a real app, cropped to one panel of a diagram editor:
 
 ![Switching the plane in a diagram editor](media/diagc-planes.gif)
 
+## Film a desktop app
+
+A Linux desktop app is filmed in the same way, in a container. Its storyboard has `app` where a web page has `url`: the image that holds the app, and the command that starts it. `howto image` builds the base of that image once, and `howto login NAME STORYBOARD` signs in to an app that needs it.
+
+[Filming a desktop app](desktop.md) has the setup, the storyboard, and what differs from a web page.
+
 ## Which model writes the storyboard
 
 `howto` calls no model. The agent that follows the skill does the thinking. A probe prints text only, so a model without image input is enough, and a model that runs on your own machine has written working storyboards from one sentence.

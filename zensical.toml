@@ -7,7 +7,7 @@
 #   uv run --extra site zensical build --strict
 [project]
 site_name = "howto"
-site_description = "Narrated how-to videos and animated pictures of a web app, from a YAML storyboard"
+site_description = "Narrated how-to videos and animated pictures of a web app or a Linux desktop app, from a YAML storyboard"
 site_url = "https://ferroman.github.io/howto/"
 repo_url = "https://github.com/Ferroman/howto"
 docs_dir = "_build/docs"
@@ -15,6 +15,7 @@ site_dir = "_site"
 nav = [
   { "Home" = "index.md" },
   { "Guide" = "guide.md" },
+  { "Desktop apps" = "desktop.md" },
   { "Speech" = "speech.md" },
   { "Storyboard format" = "storyboard.md" },
   { "Internals" = "internals.md" },
