@@ -2,7 +2,7 @@
 
 [![tests](https://github.com/Ferroman/howto/actions/workflows/test.yml/badge.svg)](https://github.com/Ferroman/howto/actions/workflows/test.yml)
 
-`howto` turns a storyboard, a YAML file of steps and narration, into a narrated how-to video of a web app: an MP4 with SRT and WebVTT subtitles. From the same kind of file it makes a short animated picture, a GIF and a WebP, to illustrate documentation.
+`howto` turns a storyboard, a YAML file of steps and narration, into a narrated how-to video of a web app or of a Linux desktop app: an MP4 with SRT and WebVTT subtitles. From the same kind of file it makes a short animated picture, a GIF and a WebP, to illustrate documentation.
 
 ![Inviting a teammate: an animated picture made by howto](docs/media/invite-picture.gif)
 
@@ -10,7 +10,8 @@
 
 - **A storyboard is the only input.** It names each control as a person would, `{role: button, name: Invite}`, and says what to tell the viewer at each step. `howto` performs it in a browser of its own, records it and speaks the narration.
 - **An AI agent can write the storyboard.** [skill/SKILL.md](skill/SKILL.md) teaches an agent the format. The agent explores your app with `howto probe`, which prints a text outline of the page, so a model without image input is enough. `howto` itself calls no model.
-- **Everything runs on your machine.** The browser is Playwright's Chromium. The speech comes from a command that you choose, and two come with `howto`.
+- **A desktop app is filmed in a container**, on a monitor of its own, away from your files and your screen. One mechanism serves every app that draws on X11. See [docs/desktop.md](docs/desktop.md).
+- **Everything runs on your machine.** The browser is Playwright's Chromium, and the container of a desktop app is Docker's. The speech comes from a command that you choose, and two come with `howto`.
 - **A change is cheap.** Each sentence is spoken once and kept, so a changed sentence costs one sentence, and a render is repeatable.
 
 ## Status
@@ -19,15 +20,16 @@ This is version 0.1.
 
 - **Linux only so far.** It is developed on an Ubuntu 24.04 system, and the tests run on Ubuntu. macOS and Windows are untried.
 - **Narration is in English.**
-- **Web apps only.** Whatever runs in a browser tab can be filmed. Desktop programs cannot.
+- **Web apps and Linux desktop apps.** Whatever runs in a browser tab can be filmed, and so can a Linux app that draws on X11. An app for macOS or Windows cannot, and neither can one that runs on Wayland only.
 
 ## How it fits together
 
-![howto reads a storyboard that you or an agent wrote. On your machine it runs Chromium, a speech command, ffmpeg and img2webp, and they give a narrated video or an animated picture.](.diagrams/static/context.png)
+![howto reads a storyboard that you or an agent wrote. On your machine it runs Chromium, or a Docker container for a desktop app, and a speech command, ffmpeg and img2webp. They give a narrated video or an animated picture.](.diagrams/static/context.png)
 
 `howto` does its work through other programs, and all of them run on your machine.
 
 - **Chromium** performs the storyboard on your web app and records it.
+- **Docker** runs a desktop app in a container, with the recorder beside it. A storyboard of a web page needs none.
 - **The speech command** speaks each sentence of the narration. An animated picture needs none.
 - **ffmpeg**, with `ffprobe`, joins the recording and the narration into the video, and builds the GIF.
 - **`img2webp`** encodes the WebP, and nothing else needs it.
@@ -38,6 +40,7 @@ The agent is optional: a person writes a storyboard in the same way, with `howto
 
 - [`uv`](https://docs.astral.sh/uv/), which builds the Python environment
 - `ffmpeg` and `ffprobe`
+- [Docker](https://docs.docker.com/engine/install/), for a desktop app only
 - `img2webp`, from the `webp` package, for the WebP of an animated picture. Without it, `howto animate --format gif` still works
 - A speech command, for narration. See [Speech](#speech). An animated picture needs none
 
@@ -110,8 +113,43 @@ steps:
 - **Marks** point at things: `box`, `circle`, `underline`, `arrow` and `spotlight`.
 - **`zoom: 2`** enlarges the page around each control as it is used.
 - **`crop`** cuts an animated picture to one part of the page.
+- **`app`** in place of `url` films a Linux desktop app. See [A desktop app](#a-desktop-app).
 
 [skill/SKILL.md](skill/SKILL.md) is the full reference of the format. [docs/guide.md](docs/guide.md) is the guide for a person.
+
+## A desktop app
+
+A storyboard with `app` films a Linux app in a Docker container. The repository has an example, a storyboard for the text editor gedit:
+
+```bash
+howto image
+docker build -t howto-gedit examples/desktop
+howto probe examples/desktop/replace.yaml
+```
+
+`howto image` builds the base image once: a monitor, a recorder, and the helper that `howto` talks to. The second command adds the app to it, from [examples/desktop/Dockerfile](examples/desktop/Dockerfile). The storyboard names the image and the command that starts the app:
+
+```yaml
+title: Export a drawing as PNG
+app:
+  image: howto-inkscape
+  run: inkscape /files/logo.svg
+steps:
+  - say: Open the File menu, and choose Export.
+    do:
+      - click: {role: menu, name: File}
+      - click: {role: menuitem, name: Export…}
+  - say: Click the drawing, then press Export.
+    do:
+      - click: {at: 960x540}
+      - click: {text: Export}
+```
+
+- **A control is named as on a web page**, by its role and its name. The app tells both to a screen reader, and `howto` probe prints them.
+- **What has no name is found by its words**, which `howto` reads off the screen, or by its place: `{at: 960x540}`.
+- **`howto render` and `howto animate` work as for a web page**, with the same narration, marks, zoom and crop.
+
+[docs/desktop.md](docs/desktop.md) has the rest: what can be filmed, how to sign in to an app, and what differs from a web page.
 
 ## Let an agent write it
 
@@ -121,7 +159,7 @@ The skill in `skill/` is written for an AI coding agent. The installer links it 
 
 The agent writes the storyboard, probes it until every step works, and renders it.
 
-**Every probe and every take performs its actions for real**, and an agent probes many times. Point it at a demo workspace or a test account, never at real data. For an app that needs a sign-in, run `howto login NAME URL` once: a browser window opens, you sign in, and the session stays in a profile that a storyboard names with `profile: NAME`.
+**Every probe and every take performs its actions for real**, and an agent probes many times. Point it at a demo workspace or a test account, never at real data. For an app that needs a sign-in, run `howto login NAME URL` once: a browser window opens, you sign in, and the session stays in a profile that a storyboard names with `profile: NAME`. For a desktop app the command is `howto login NAME STORYBOARD`, and the window shows the app.
 
 ## Speech
 
@@ -165,7 +203,8 @@ export HOWTO_TTS=howto-tts-kokoro
 | `howto animate STORYBOARD` | Writes `NAME.gif` and `NAME.webp` next to the storyboard. They loop without sound |
 | `howto narrate STORYBOARD` | Speaks the narration only and writes `NAME.narration.wav` next to the storyboard |
 | `howto voice NAME DESCRIPTION` | Makes a voice from a description. `howto voice` lists the voices, and `howto voice NAME` shows one |
-| `howto login PROFILE URL` | Opens a browser window for a person to sign in. The session stays in the profile |
+| `howto login PROFILE WHERE` | Opens a window for a person to sign in. `WHERE` is an address, or the storyboard of a desktop app, whose profile is a Docker volume |
+| `howto image` | Builds `howto-desktop`, the base of the image that a desktop app runs in |
 
 The options:
 
@@ -174,7 +213,7 @@ The options:
 | `--until N` | `probe` | Stops after step N, so that the outline is of an earlier page |
 | `--within LOCATOR` | `probe` | Limits the outline to one element, for example `--within '{role: dialog}'` |
 | `--max-chars N` | `probe` | Cuts the outline off at N characters. The default is 20000 |
-| `--show` | `probe` | Uses a visible browser window |
+| `--show` | `probe` | Uses a visible browser window. For a desktop app, shows its monitor in a window that takes no input |
 | `--out DIR` | `render`, `animate`, `narrate` | Where the files go. The default is next to the storyboard |
 | `--keep-work` | `render`, `animate` | Keeps the intermediate files of the take, in a folder under `~/.cache/howto/work` |
 | `--format gif`, `--format webp` | `animate` | Writes one of the two. The default is both |
@@ -198,13 +237,15 @@ The exit codes:
 | `HOWTO_TTS` | `tts` | The speech command, with its options |
 | `HOWTO_FFMPEG`, `HOWTO_FFPROBE` | Homebrew on Linux, then `PATH` | The ffmpeg programs |
 | `HOWTO_IMG2WEBP` | Homebrew on Linux, then `PATH` | The program that writes an animated WebP |
+| `HOWTO_DOCKER` | `docker` | The Docker command, with its options, for a desktop app |
 | `HOWTO_ACTION_TIMEOUT` | `10` | Seconds an element gets to appear |
 | `HOWTO_DATA_DIR` | `~/.local/share/howto` | Browser profiles, voices and Kokoro's models |
-| `HOWTO_CACHE_DIR` | `~/.cache/howto` | Spoken clips and intermediate files |
+| `HOWTO_CACHE_DIR` | `~/.cache/howto` | Spoken clips, intermediate files, and the screenshot of a desktop probe |
 
 ## More
 
 - [docs/guide.md](docs/guide.md): how to make a video and a picture, how to choose a voice, and the things that surprise.
+- [docs/desktop.md](docs/desktop.md): how to film a Linux desktop app, and what differs from a web page.
 - [docs/speech.md](docs/speech.md): how to set up a speech command, and how to make a voice.
 - [docs/internals.md](docs/internals.md): how the zoom, the marks, the pictures and the voices work, and why.
 - [skill/SKILL.md](skill/SKILL.md): the storyboard format, written for an agent.
@@ -213,11 +254,12 @@ The exit codes:
 
 ```bash
 uv run --extra test playwright install chromium   # once
-uv run --extra test pytest                        # unit tests and browser tests
+uv run howto image                                # once, and after a change to the helper
+uv run --extra test pytest                        # unit tests, browser tests and desktop tests
 bash install.test.sh                              # the installer, in a sandbox
 ```
 
-Without Chromium the browser tests are skipped, which is not a pass.
+Without Chromium the browser tests are skipped, and without Docker or the base image the desktop tests are. A skipped test is not a pass: `HOWTO_REQUIRE_BROWSER=1` and `HOWTO_REQUIRE_DESKTOP=1` turn each skip into a failure.
 
 ## Licence
 
