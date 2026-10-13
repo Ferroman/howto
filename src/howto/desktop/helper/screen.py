@@ -6,8 +6,10 @@ publishes nothing.
 """
 from __future__ import annotations
 
+import collections
 import subprocess
 from dataclasses import dataclass
+from typing import Sequence
 
 from .session import DISPLAY, RUNTIME
 from .tree import Box, Node, below, on_picture, tidy
@@ -156,3 +158,33 @@ def read(path: str) -> list[Line]:
     if proc.returncode != 0:
         raise RuntimeError(f"tesseract failed (exit {proc.returncode}): {proc.stderr.strip()[-300:]}")
     return lines_of(proc.stdout, ENLARGE)
+
+
+# A pixel is something when it differs from the most common colour of its area by more than this, in red,
+# green or blue. A gradient and the noise of a picture stay under it.
+NEAR = 24
+
+
+def share(colours: Sequence[tuple[int, int, int]]) -> float:
+    """The part of an area that is something: the pixels that are not near its most common colour."""
+    if not colours:
+        return 0.0
+    ground = collections.Counter(colours).most_common(1)[0][0]
+    other = sum(1 for colour in colours if max(abs(a - b) for a, b in zip(colour, ground)) > NEAR)
+    return other / len(colours)
+
+
+def busy(path: str, areas: list) -> list[float]:
+    """For each area of a screenshot, the part of it that is something. An area off the monitor is all something."""
+    from PIL import Image
+
+    picture = Image.open(path).convert("RGB")
+    found = []
+    for x, y, width, height in areas:
+        left, top = max(0, round(x)), max(0, round(y))
+        right, bottom = min(picture.width, round(x + width)), min(picture.height, round(y + height))
+        if right <= left or bottom <= top:
+            found.append(1.0)
+            continue
+        found.append(round(share(list(picture.crop((left, top, right, bottom)).getdata())), 3))
+    return found

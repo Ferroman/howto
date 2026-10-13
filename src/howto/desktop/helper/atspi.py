@@ -110,3 +110,16 @@ def scroll_into_view(node: Node) -> bool:
         return bool(Atspi.Component.scroll_to(node.ref, Atspi.ScrollType.ANYWHERE))
     except Exception:  # noqa: BLE001 - an app that does not know the request
         return False
+
+
+def words_box(node: Node, to_picture: Callable[[int, Box], Box]) -> Box | None:
+    """Where the characters of an element are. None for an element without text, and for an app that does not say."""
+    Atspi = _bindings()
+    try:
+        count = Atspi.Text.get_character_count(node.ref)
+        if count <= 0:
+            return None
+        rect = Atspi.Text.get_range_extents(node.ref, 0, count, Atspi.CoordType.SCREEN)
+    except Exception:  # noqa: BLE001 - an element without text, or one that went away
+        return None
+    return to_picture(node.pid, (rect.x, rect.y, rect.width, rect.height))

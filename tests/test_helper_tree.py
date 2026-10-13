@@ -1,6 +1,6 @@
 """The helper's parts that touch no bus: the names of roles, which element a locator names, and the outline."""
 from howto.desktop.helper.roles import web_role
-from howto.desktop.helper.tree import Node, match, names, nearest, outline
+from howto.desktop.helper.tree import Node, match, names, nearest, outline, tighter
 
 PICTURE = (1920, 1080)
 
@@ -178,3 +178,24 @@ def test_the_names_a_locator_could_have_meant_are_those_of_its_role():
     assert names([window()], {"role": "menu", "name": "Fiel"}, PICTURE) == ["File", "Edit"]
     assert "sam@example.com" in names([window()], {"text": "sam"}, PICTURE)
     assert names([window()], {"label": "Emial"}, PICTURE) == ["Email address", "sam@example.com"]
+
+
+LABEL = (12, 300, 1256, 24)
+
+
+def test_the_box_of_the_words_is_taken_when_it_lies_in_the_element():
+    assert tighter(LABEL, (12, 303, 140, 18)) == (12, 303, 140, 18)
+
+
+def test_words_within_a_pixel_of_the_element_still_lie_in_it():
+    assert tighter(LABEL, (11.5, 299.5, 140, 25)) == (11.5, 299.5, 140, 25)
+
+
+def test_words_that_the_app_places_outside_the_element_are_not_believed():
+    assert tighter(LABEL, (0, 0, 140, 18)) == LABEL
+    assert tighter(LABEL, (12, 303, 1400, 18)) == LABEL
+
+
+def test_no_words_and_words_without_a_size_leave_the_element_as_it_is():
+    assert tighter(LABEL, None) == LABEL
+    assert tighter(LABEL, (12, 303, 0, 18)) == LABEL

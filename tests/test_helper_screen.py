@@ -1,5 +1,5 @@
 """The helper's reading of the screen, with tesseract's table given as text."""
-from howto.desktop.helper.screen import Line, lacking, lines_of, spot
+from howto.desktop.helper.screen import Line, lacking, lines_of, share, spot
 from howto.desktop.helper.tree import Node
 
 PICTURE = (1920, 1080)
@@ -123,3 +123,28 @@ def test_what_a_field_holds_counts_as_words_that_the_tree_has():
 def test_a_line_is_its_words_and_their_boxes():
     line = Line((("Layer", (10, 10, 50, 20)), ("1", (64, 12, 10, 18))))
     assert (line.text, line.box) == ("Layer 1", (10, 10, 64, 20))
+
+
+WHITE, DARK = (255, 255, 255), (20, 20, 20)
+
+
+def test_an_area_of_one_colour_has_nothing_in_it():
+    assert share([WHITE] * 144) == 0.0
+
+
+def test_what_is_not_the_most_common_colour_is_something():
+    assert share([WHITE] * 108 + [DARK] * 36) == 0.25
+
+
+def test_a_gradient_is_not_something():
+    # A header bar: each row of pixels is a shade lighter than the one above it.
+    rows = [(200 + row, 200 + row, 204 + row) for row in range(12) for _ in range(12)]
+    assert share(rows) == 0.0
+
+
+def test_a_colour_that_differs_in_one_channel_only_is_something():
+    assert share([WHITE] * 3 + [(255, 255, 200)]) == 0.25
+
+
+def test_an_area_without_a_pixel_has_nothing_in_it():
+    assert share([]) == 0.0

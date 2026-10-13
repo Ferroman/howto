@@ -184,3 +184,20 @@ def nearest(wanted: str, heard: list[str], most: int = 3) -> list[str]:
         written.setdefault(tidy(words).casefold(), tidy(words))
     close = difflib.get_close_matches(tidy(wanted).casefold(), list(written), n=most, cutoff=0.6)
     return [written[key] for key in close]
+
+
+# The roles that show nothing but their words. A mark goes around the words, not around the room that the app
+# gave them: a label is often as wide as its window.
+WORDS_ONLY = frozenset({"label", "heading", "paragraph", "link", "caption"})
+
+
+def tighter(box: Box, words: Box | None) -> Box:
+    """The box of an element's words, when the app gave one that lies in the element. Else the element's own box."""
+    if words is None or words[2] <= 0 or words[3] <= 0:
+        return box
+    # A pixel of slack: a toolkit rounds the two boxes apart.
+    inside = (
+        words[0] >= box[0] - 1 and words[1] >= box[1] - 1
+        and words[0] + words[2] <= box[0] + box[2] + 1 and words[1] + words[3] <= box[1] + box[3] + 1
+    )
+    return words if inside else box

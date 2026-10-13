@@ -275,3 +275,29 @@ def test_a_screenshot_is_a_picture_of_the_monitor(helper, tmp_path):
     assert data[:8] == b"\x89PNG\r\n\x1a\n"
     # The width and the height of a PNG are the two numbers after its first chunk's name.
     assert (int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")) == (1280, 720)
+
+
+def test_busy_tells_a_place_with_words_from_an_empty_one(helper):
+    x, y, width, height = find(helper, text="Painted words")["box"]
+    on_the_words = [x + 20, y + 6, 40, 20]
+    # The painted part of the window is white from under its words to the bottom.
+    under_them = [x, y + height + 120, 40, 20]
+    off_the_monitor = [5000, 5000, 12, 12]
+    shares = helper.request("busy", limit=30, areas=[on_the_words, under_them, off_the_monitor])["shares"]
+    assert shares[0] > 0.1 and shares[1] == 0.0 and shares[2] == 1.0
+
+
+def tight(link, **locator):
+    return link.request("find", limit=20, locator=locator, timeout=10, tight=True)["box"]
+
+
+def test_a_mark_gets_the_box_of_a_labels_words_and_not_of_its_room(helper):
+    room = find(helper, text="Nothing added yet")["box"]
+    words = tight(helper, text="Nothing added yet")
+    # The label is as wide as the window, less its margins. Its words are not.
+    assert room[2] > 1000 and 80 < words[2] < 400
+    assert words[0] >= room[0] - 1 and words[1] >= room[1] - 1 and words[1] + words[3] <= room[1] + room[3] + 1
+
+
+def test_a_control_keeps_its_own_box_for_a_mark(helper):
+    assert tight(helper, role="button", name="Add") == find(helper, role="button", name="Add")["box"]

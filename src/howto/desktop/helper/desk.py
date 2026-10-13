@@ -15,7 +15,7 @@ LOOK_EVERY = 0.25
 # Milliseconds between two keys when nothing is being shown. With no pause at all xdotool loses keys.
 QUICK_KEY_MS = 1
 REQUESTS = ("start", "find", "pointer", "click", "type", "key", "scroll_to", "run", "outline",
-           "record_start", "record_stop", "screenshot", "words")
+           "record_start", "record_stop", "screenshot", "words", "busy")
 
 
 def _with(why: str, said: str) -> str:
@@ -54,8 +54,12 @@ class Desk:
         xinput.move(f"mousemove {q['width'] - 24} {q['height'] - 24}\n")
         return {"build": os.environ.get("HOWTO_BUILD", ""), "title": self.session.title()}
 
+    def _to_picture(self, pid: int, box: tuple) -> tree.Box:
+        """A box as an app reports it, in pixels of the picture."""
+        return tuple(float(value) for value in box)
+
     def _windows(self, hidden: bool = False) -> list[tree.Node]:
-        return atspi.snapshot(lambda pid, box: tuple(float(value) for value in box), hidden)
+        return atspi.snapshot(self._to_picture, hidden)
 
     def _gone(self) -> None:
         """Refuses when the app has ended: nothing more can be found in it."""
@@ -124,10 +128,11 @@ class Desk:
         found, places, windows, lines = self._seek(locator, q["timeout"])
         if len(found) == 1:
             element, window = found[0]
-            return {
-                "count": 1, "box": list(element.box or (0.0, 0.0, 0.0, 0.0)), "layer": "tree",
-                "window": tree.tidy(window.name),
-            }
+            box = element.box or (0.0, 0.0, 0.0, 0.0)
+            if q.get("tight") and element.role in tree.WORDS_ONLY:
+                # A mark goes around the words of a label, not around the room that the app gave it.
+                box = tree.tighter(box, atspi.words_box(element, self._to_picture))
+            return {"count": 1, "box": list(box), "layer": "tree", "window": tree.tidy(window.name)}
         if found:
             return {"count": len(found)}
         if len(places) == 1:
@@ -227,6 +232,10 @@ class Desk:
                 )
             ]
         return {"lines": [{"text": line.text, "box": list(line.box)} for line in lines]}
+
+    def busy(self, q: dict) -> dict:
+        """For each area of the picture, the part of it that is something. An arrow is drawn where little is."""
+        return {"shares": screen.busy(screen.shot(*self.picture), q["areas"])}
 
     def outline(self, q: dict) -> dict:
         windows = self._windows()
