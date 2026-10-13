@@ -49,4 +49,7 @@ packages = ["src/howto"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = ["browser: needs Playwright's Chromium and a real ffmpeg"]
+markers = [
+  "browser: needs Playwright's Chromium and a real ffmpeg",
+  "desktop: needs Docker and the image that `howto image` builds",
+]

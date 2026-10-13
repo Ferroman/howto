@@ -325,7 +325,8 @@ def desktop():
         pytest.skip(str(exc))
     # The build goes in as a tar on stdin, as the base image's does.
     data = io.BytesIO()
-    with tarfile.open(fileobj=data, mode="w") as tar:
+    # GNU_FORMAT: pax writes a ././@PaxHeader member for a fractional mtime, and BuildKit reads it as the Dockerfile.
+    with tarfile.open(fileobj=data, mode="w", format=tarfile.GNU_FORMAT) as tar:
         for path in sorted((Path(__file__).parent / "fixtures" / "desktop").iterdir()):
             tar.add(path, arcname=path.name)
     built = subprocess.run([*docker, "build", "-q", "-t", FIXTURE_IMAGE, "-"], input=data.getvalue(), capture_output=True)
