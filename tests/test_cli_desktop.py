@@ -402,3 +402,12 @@ def test_login_makes_the_profile_and_shows_the_app_until_the_window_closes(deskt
     assert profiles.exists(desktop.docker, profile) is True
     # The storyboard now starts on the profile that the login made.
     assert cli.main(["probe", str(write_board(tmp_path, desktop, WAIT, profile=profile))]) == 0
+
+
+def test_a_probe_of_a_storyboard_that_zooms_reports_in_pixels_of_the_picture(desktop, sandbox, tmp_path, capsys):
+    steps = [{"do": [{"click": {"role": "button", "name": "Flash"}}, {"circle": {"text": "Painted words"}}]}]
+    assert cli.main(["probe", str(write_board(tmp_path, desktop, steps, zoom=2))]) == 0
+    out = capsys.readouterr().out
+    assert "step 1 ok" in out and '- frame "Fixture" [active]:' in out
+    data = (sandbox.cache / "probe" / "add.png").read_bytes()
+    assert (int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")) == (1280, 720)
