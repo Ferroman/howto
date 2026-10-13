@@ -16,7 +16,7 @@ from howto.storyboard import load, parse, read_yaml
 
 ROOT = Path(__file__).parent.parent
 EXAMPLES = ROOT / "examples"
-DOCUMENTS = ("README.md", "docs/guide.md", "skill/SKILL.md")
+DOCUMENTS = ("README.md", "docs/guide.md", "docs/desktop.md", "skill/SKILL.md")
 BOARDS = sorted(EXAMPLES.glob("*.yaml"))
 # Where the README's quick start serves the demo page.
 ADDRESS = "http://localhost:8000"
@@ -162,7 +162,8 @@ def test_the_desktop_example_is_a_storyboard_of_six_steps_for_its_image():
 def test_the_desktop_example_runs_in_its_image(desktop, sandbox, capsys):
     # The image is built as the README builds it, from the folder of the example. It goes in as a tar on stdin.
     data = io.BytesIO()
-    with tarfile.open(fileobj=data, mode="w") as tar:
+    # tarfile's default pax format writes a ././@PaxHeader member, which BuildKit reads as a Dockerfile instruction.
+    with tarfile.open(fileobj=data, mode="w", format=tarfile.GNU_FORMAT) as tar:
         for path in sorted(DESKTOP.iterdir()):
             tar.add(path, arcname=path.name)
     built = subprocess.run([*desktop.docker, "build", "-q", "-t", "howto-gedit", "-"], input=data.getvalue(), capture_output=True)
