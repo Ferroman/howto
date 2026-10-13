@@ -44,12 +44,20 @@ def _voice(storyboard: Storyboard) -> voices.Voice | None:
     return voices.load(voices_dir(), storyboard.voice) if storyboard.voice else None
 
 
-# Playwright is imported only when a browser is needed. `howto --help` and
-# `howto narrate` then start without it, and the tests replace these two names.
+# Playwright and Docker are reached only when a stage is needed. `howto --help`
+# and `howto narrate` then start without either, and the tests replace these
+# two names.
 def open_stage(storyboard: Storyboard, *, headless: bool, interrupt: Interrupt | None = None):
-    from .capture import open_stage as real
+    """The stage of a storyboard: a container for one with `app`, the browser for one with `url`."""
+    if storyboard.desktop:
+        if not headless:
+            raise RunError("`--show` of a desktop app is not built yet")
+        from .desktop.stage import open_stage as desktop
 
-    return real(storyboard, profiles_dir=profiles_dir(), headless=headless, interrupt=interrupt)
+        return desktop(storyboard, interrupt=interrupt)
+    from .capture import open_stage as browser
+
+    return browser(storyboard, profiles_dir=profiles_dir(), headless=headless, interrupt=interrupt)
 
 
 def login(profile_dir: Path, url: str) -> None:
@@ -84,7 +92,7 @@ def _explain_failure(storyboard: Storyboard, result: RunResult) -> str:
     label = "setup" if failed.index == 0 else f"step {failed.index}"
     if failed.index == 0 and storyboard.profile:
         print(
-            f"howto: if the profile is signed out, run `howto login {storyboard.profile} {storyboard.url}`",
+            f"howto: if the profile is signed out, run `howto login {storyboard.profile} {storyboard.origin}`",
             file=sys.stderr,
         )
     return f"{label}: {failed.error}"
