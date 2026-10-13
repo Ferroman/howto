@@ -3,9 +3,10 @@ from pathlib import Path
 
 import pytest
 
-from fakes import ScriptedLink
+from fakes import FakeClock, ScriptedLink
+from howto.desktop import takelog
 from howto.desktop.link import HelperError
-from howto.desktop.stage import DesktopStage, wire
+from howto.desktop.stage import DesktopStage, PRESS, wire
 from howto.errors import RunError
 from howto.runner import Interrupt, StepFailed
 from howto.storyboard import Pace, parse, parse_locator
@@ -281,7 +282,6 @@ def test_a_mark_of_a_probe_only_finds_its_element():
 @pytest.mark.parametrize(
     "call, what",
     [
-        (lambda desk: desk.start_recording(Path("capture.mkv")), "a recording"),
         (lambda desk: desk.crop_to(action({"click": ADD}), ()), "`crop`"),
         (lambda desk: desk.mark(action({"circle": ADD}), True), "a mark"),
     ],
@@ -290,3 +290,121 @@ def test_what_a_take_needs_is_not_built_yet(call, what):
     desk, _ = stage(("find", found()))
     with pytest.raises(RunError, match=f"{what} of a desktop app is not built yet"):
         call(desk)
+
+
+def recording(tmp_path, *script, first_frame=99.2, **options):
+    """A stage that has started recording. The clock says 100 when the take begins."""
+    clock = FakeClock()
+    desk, link = stage(("record_start", {"first_frame": first_frame}), *script, now=clock.now, **options)
+    desk.start_recording(tmp_path / "capture.mkv")
+    return desk, link, clock
+
+
+def stopped(desk, tmp_path):
+    desk.stop_recording()
+    return takelog.read(tmp_path / "take.json")
+
+
+def test_the_head_is_the_part_of_the_recording_before_the_take(tmp_path):
+    desk, link, _ = recording(tmp_path, ("record_stop", {"path": "/tmp/howto/take.mkv"}))
+    log = stopped(desk, tmp_path)
+    assert log.head == pytest.approx(0.8)
+    assert log.viewport == (1920, 1080) and log.shown == ()
+    assert link.fetched == [("/tmp/howto/take.mkv", tmp_path / "capture.mkv")]
+
+
+def test_a_first_frame_after_the_start_of_the_take_gives_no_head(tmp_path):
+    desk, _, _ = recording(tmp_path, ("record_stop", {"path": "/tmp/howto/take.mkv"}), first_frame=100.4)
+    assert stopped(desk, tmp_path).head == 0.0
+
+
+def test_in_a_take_the_pointer_travels_and_the_button_stays_down(tmp_path):
+    desk, link, clock = recording(tmp_path, ("find", found(x=100, y=40)), ("pointer", {}), ("click", {}))
+    clock.t += 2.0
+    desk.perform(action({"click": ADD}), Pace())
+    pointer, click = link.asked[2], link.asked[3]
+    # From the corner where the helper parks it, 1896 x 1056, to 140 x 55: a long way, so the longest time.
+    assert pointer == ("pointer", {"x": 140.0, "y": 55.0, "seconds": 0.9})
+    assert click == ("click", {"hold": PRESS, "window": "Fixture"})
+
+
+def test_a_short_way_still_takes_a_quarter_of_a_second(tmp_path):
+    script = [("find", found(x=100, y=40)), ("pointer", {}), ("find", found(x=130, y=40)), ("pointer", {})]
+    desk, link, _ = recording(tmp_path, *script)
+    desk.perform(action({"hover": ADD}), Pace())
+    desk.perform(action({"hover": ADD}), Pace())
+    assert link.asked[-1] == ("pointer", {"x": 170.0, "y": 55.0, "seconds": 0.25})
+
+
+def test_a_click_leaves_a_ring_in_the_log_at_the_time_of_the_press(tmp_path):
+    script = [("find", found(x=100, y=40)), ("pointer", {}), ("click", {}), ("record_stop", {"path": "/x.mkv"})]
+    desk, _, clock = recording(tmp_path, *script)
+    clock.t += 2.0
+    desk.perform(action({"click": ADD}), Pace())
+    (ring,) = stopped(desk, tmp_path).shown
+    assert (ring.kind, ring.start, ring.end, ring.grow) == ("click", 2.0, 2.45, 0.45)
+    assert "left:140.0px;top:55.0px" in ring.html
+
+
+def test_in_a_take_text_is_typed_at_the_pace_of_the_storyboard(tmp_path):
+    desk, link, _ = recording(tmp_path, ("type", {}))
+    desk.perform(action({"type": "hello"}), Pace(typing=20.0))
+    assert link.asked[-1] == ("type", {"text": "hello", "rate": 20.0})
+
+
+def test_a_probe_keeps_jumping_and_typing_at_once():
+    desk, link = stage(("find", found()), ("pointer", {}), ("click", {}), ("type", {}))
+    desk.perform(action({"click": ADD}), Pace())
+    desk.perform(action({"type": "hello"}), Pace())
+    assert link.asked[1][1]["seconds"] == 0 and link.asked[2][1]["hold"] == 0 and link.asked[3][1]["rate"] == 0
+
+
+def test_a_note_is_in_the_log_from_when_it_is_shown_to_when_it_is_hidden(tmp_path):
+    desk, _, clock = recording(tmp_path, ("record_stop", {"path": "/x.mkv"}))
+    clock.t += 1.0
+    desk.show_note("Use a <work> address.")
+    clock.t += 3.5
+    desk.hide_note()
+    (note,) = stopped(desk, tmp_path).shown
+    assert (note.kind, note.start, note.end, note.grow, note.fade) == ("note", 1.0, 4.5, 0.0, 0.0)
+    assert "Use a &lt;work&gt; address." in note.html
+
+
+def test_a_note_that_is_still_shown_ends_with_the_take(tmp_path):
+    desk, _, clock = recording(tmp_path, ("record_stop", {"path": "/x.mkv"}))
+    desk.show_note("Still here")
+    clock.t += 2.0
+    (note,) = stopped(desk, tmp_path).shown
+    assert (note.start, note.end) == (0.0, 2.0)
+
+
+def test_a_title_card_fades_in_stays_and_fades_out(tmp_path):
+    desk, _, clock = recording(tmp_path, ("record_stop", {"path": "/x.mkv"}))
+    desk.show_chapter("Add a name", 2.0)
+    clock.t += 3.0
+    (card,) = stopped(desk, tmp_path).shown
+    assert (card.kind, card.start, card.end, card.grow, card.fade) == ("card", 0.0, 2.3, 0.3, 0.3)
+    assert "Add a name" in card.html
+
+
+def test_a_take_that_was_stopped_ends_its_recording_and_fetches_nothing(tmp_path):
+    interrupt = Interrupt()
+    desk, link, _ = recording(tmp_path, ("record_stop", {"path": "/x.mkv"}), interrupt=interrupt)
+    interrupt.request()
+    with pytest.raises(KeyboardInterrupt):
+        desk.perform(action({"press": "Enter"}), Pace())
+    desk.stop_recording()
+    assert link.asked[-1] == ("record_stop", {})
+    assert link.fetched == [] and not (tmp_path / "take.json").exists()
+
+
+def test_stopping_twice_or_without_a_recording_does_nothing(tmp_path):
+    desk, link = stage()
+    desk.stop_recording()
+    assert link.asked == []
+
+
+def test_a_recording_that_cannot_be_ended_ends_the_command(tmp_path):
+    desk, _, _ = recording(tmp_path, ("record_stop", HelperError("internal", "RuntimeError: ffmpeg failed while recording")))
+    with pytest.raises(RunError, match="the desktop failed: RuntimeError: ffmpeg failed while recording"):
+        desk.stop_recording()
