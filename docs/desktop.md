@@ -92,7 +92,7 @@ screenshot: /home/sam/.cache/howto/probe/export.png
 ```
 
 - **The outline** is what the app says about itself to a screen reader: each control with its role and its name.
-- **The words** are what `howto` reads off the screen and the outline lacks, such as the text of a canvas. Each line has a locator to copy.
+- **The words** are what `howto` reads off the screen and the outline lacks, such as the text of a canvas. Each line has a locator to copy. The reading is not trusted: it names a word only when the word is large and plain, so a words locator is a last resort after the outline.
 - **The screenshot** is the monitor as the probe left it. Each probe of a storyboard replaces the last one. A place on it is a place of the picture, so a point that you read off it is a point that `at` takes.
 
 ## Name what a step acts on
@@ -105,7 +105,7 @@ screenshot: /home/sam/.cache/howto/probe/export.png
 | `{at: 960x540}` | Nowhere: it is a point of the picture | A canvas, or a control with no name and no words |
 | `{at: 900x500, size: 120x40}` | Nowhere: it is an area | A mark or a `crop` at such a place |
 
-An app that says nothing to a screen reader has an empty outline, and can still be filmed: by its words, and by places.
+An app that says nothing to a screen reader has an empty outline, and can still be filmed: by its words, and by places. Small text is not read, so a place is the way for it.
 
 ## An app that needs a sign-in
 
@@ -129,6 +129,7 @@ profile: demo
 
 - **The text of a zoom is as sharp as the app draws it**, up to a zoom of 2. Above 2 it softens.
 - **The pointer is enlarged with the picture**, as under a magnifier.
+- **The title bar does not grow with the scale**, so a picture of a scaled app has one height of decoration above doubled content.
 - **An app that ignores the scale is drawn small**, in a corner of the monitor. The screenshot of a probe shows it. `viewport: 1280x720` without a zoom is then the way to larger controls.
 - **A take with a zoom is four times the work to record.** A storyboard without `zoom` keeps a monitor of the picture's size.
 
@@ -141,6 +142,8 @@ profile: demo
 - **An app that ends during the steps fails the step**, with its exit code and the last lines that it printed.
 - **`select` needs a list that the outline has.** For a list that only the screen shows, write two clicks.
 - **`fill` selects what is in the field with Control+A** before it types. In a terminal or on a canvas, write a `click` and then `type`.
+- **A character that the monitor's keyboard has no key for is pressed by its Unicode keysym name**, such as `U00E9` for `é`. An accented letter reaches the app even when it cannot be typed.
 - **A mark goes around the words of a label**, not around the room that the app gave the label.
+- **A mark on a GTK 4 app lands in the top-left corner.** Its boxes are not in monitor coordinates, so the unit of the boxes cannot be worked out and `howto` uses the scale of the monitor instead. Write `{at: ..., size: ...}` for a mark on such an app.
 - **Ctrl+C runs `cleanup` and exits with 130**, as for a web page. The container is gone when `howto` ends, however it ends.
 - **An element gets 10 seconds to appear**, and the first window of the app three times that. `HOWTO_ACTION_TIMEOUT` changes it for a slow app.
