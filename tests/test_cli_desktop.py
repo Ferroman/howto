@@ -4,7 +4,7 @@ import json
 import pytest
 import yaml
 
-from pictures import brightness, dimensions
+from pictures import brightness, dimensions, psnr, still
 from howto import cli
 from howto.assemble import video_duration
 from howto.desktop import takelog
@@ -101,7 +101,7 @@ def test_an_image_that_does_not_exist_exits_1_with_the_command_that_builds_it(de
 
 import json
 
-from pictures import brightness, dimensions
+from pictures import brightness, dimensions, psnr, still
 
 from howto.assemble import video_duration
 from howto.desktop import takelog
@@ -226,3 +226,7 @@ def test_an_app_that_publishes_no_tree_is_probed_through_its_screen(desktop, san
     assert "step 1 ok" in out
     assert "outline:\n(nothing is showing)\n" in out
     assert '- "Pressed once" {at: ' in out
+
+
+HOWTO_REQUIRE_DESKTOP=1 uv run --extra test pytest tests/test_cli_desktop.py -q -k "cut_of_the_larger" --basetemp=spike-out/zoom-check
+ls spike-out/zoom-check/*/ours.png spike-out/zoom-check/*/theirs.png

@@ -1,6 +1,7 @@
 """What a test needs to know about a recording, a GIF or a WebP: its colours, its size and its timing."""
 from __future__ import annotations
 
+import re
 import struct
 import subprocess
 
@@ -75,3 +76,44 @@ def alpha(ffmpeg, picture, *, x, y, width, height):
         capture_output=True, check=True,
     ).stdout
     return raw[0]
+
+
+def test_a_zoom_shows_a_cut_of_the_larger_recording_and_goes_wide_again(
+    desktop, chromium, fake_tts, real_ffmpeg, sandbox, tmp_path
+):
+    ffmpeg, ffprobe = real_ffmpeg
+    steps = [{"say": "Press Flash.", "do": [{"click": {"role": "button", "name": "Flash"}}], "pause": 1}]
+    path = write_board(tmp_path, desktop, steps, zoom=2)
+    assert cli.main(["render", str(path), "--keep-work"]) == 0
+    video = path.parent / "add.mp4"
+    (work,) = sandbox.work.iterdir()
+    log = takelog.read(work / "take.json")
+    assert dimensions(ffprobe, video) == (1280, 720) and dimensions(ffprobe, work / "capture.mkv") == (2560, 1440)
+    assert log.scale == 2
+    into, out = log.moves
+    assert into.factor == 2.0 and (out.left, out.top, out.factor) == (0.0, 0.0, 1.0)
+
+    def compare(at, cut):
+        ours = still(ffmpeg, video, at, tmp_path / "ours.png")
+        theirs = still(ffmpeg, work / "capture.mkv", log.head + at, tmp_path / "theirs.png", cut)
+        return psnr(ffmpeg, ours, theirs)
+
+    # Before the move the picture is the whole recording at half its size.
+    whole = "scale=1280:720:flags=bicubic"
+    assert compare(into.start - 0.2, whole) > 30
+    # Enlarged, it is a part of the recording at the recording's own size. `zoompan` cuts at even pixels.
+    # The ring of the click has gone by then.
+    left, top = (int(value * 2) // 2 * 2 for value in (into.left, into.top))
+    assert compare(out.start - 0.1, f"crop=1280:720:{left}:{top}") > 30
+    assert compare(out.start - 0.1, whole) < 25
+    # And wide again at the end.
+    assert compare(out.start + out.seconds + 0.3, whole) > 30
+
+
+def test_a_probe_of_a_storyboard_that_zooms_reports_in_pixels_of_the_picture(desktop, sandbox, tmp_path, capsys):
+    steps = [{"do": [{"click": {"role": "button", "name": "Flash"}}, {"circle": {"text": "Painted words"}}]}]
+    assert cli.main(["probe", str(write_board(tmp_path, desktop, steps, zoom=2))]) == 0
+    out = capsys.readouterr().out
+    assert "step 1 ok" in out and '- frame "Fixture" [active]:' in out
+    data = (sandbox.cache / "probe" / "add.png").read_bytes()
+    assert (int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")) == (1280, 720)
