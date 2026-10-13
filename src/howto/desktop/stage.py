@@ -83,10 +83,13 @@ class DesktopStage:
         first: str = "",
         interrupt: Interrupt | None = None,
         now=time.monotonic,
+        shots: Path | None = None,
     ) -> None:
         self._link = link
         self._board = storyboard
         self.viewport = storyboard.viewport
+        # Where the screenshot of a report goes. None: the report has neither a screenshot nor words.
+        self._shots = shots
         self.timeout = timeout
         self._interrupt = interrupt or Interrupt()
         self._now = now
@@ -280,11 +283,13 @@ class DesktopStage:
             self._shown.append(Shown("note", start, self._time(), html))
 
     def report(self, within: Locator | None, max_chars: int) -> PageReport:
+        inside = wire(within) if within is not None else None
         try:
-            reply = self._ask("outline", limit=2 * QUICK, within=wire(within) if within is not None else None)
+            reply = self._ask("outline", limit=2 * QUICK, within=inside)
+            kept, omitted = cut_outline(reply["outline"], max_chars)
+            words, screenshot = self._screen(inside, max_chars - len(kept) if not omitted else 0)
         except HelperError as exc:
             raise RunError(f"the desktop failed: {exc}") from None
-        kept, omitted = cut_outline(reply["outline"], max_chars)
         notices = []
         if reply.get("ended") is not None:
             notices.append(f"the app ended with exit code {reply['ended']}")
@@ -294,13 +299,38 @@ class DesktopStage:
             if title and title not in known:
                 notices.append(f'a window opened that no step touched: "{title}"')
         return PageReport(
-            url=f"app {self._board.app.run}", title=reply.get("title", ""), outline=kept, omitted=omitted,
-            notices=tuple(notices),
+            url=f"app {self._board.app.run}", title=reply.get("title", ""), outline=kept,
+            omitted=omitted + words[1], notices=tuple(notices), words=words[0], screenshot=screenshot,
         )
+
+    def _screen(self, inside: dict | None, room: int) -> tuple[tuple[tuple[str, ...], int], str]:
+        """The words that the outline lacks, as many as `room` characters hold, with how many were left out, and the screenshot."""
+        if self._shots is None:
+            return ((), 0), ""
+        shot = self._ask("screenshot", limit=2 * QUICK)["path"]
+        read = self._ask("words", limit=4 * QUICK, lacking=True, within=inside, shot=shot)
+        kept, left_out = [], 0
+        for line in map(_copyable, read["lines"]):
+            # A line costs its characters and a line break.
+            if left_out == 0 and len(line) + 1 <= room:
+                kept.append(line)
+                room -= len(line) + 1
+            else:
+                left_out += len(line)
+        self._link.fetch(shot, self._shots)
+        return (tuple(kept), left_out), str(self._shots)
+
+
+def _copyable(line: dict) -> str:
+    """A line of words as a probe prints it: the words, and a locator that names their place."""
+    x, y, width, height = line["box"]
+    return f'"{line["text"]}" {{at: {int(x)}x{int(y)}, size: {max(1, round(width))}x{max(1, round(height))}}}'
 
 
 @contextmanager
-def open_stage(storyboard: Storyboard, *, interrupt: Interrupt | None = None) -> Iterator[DesktopStage]:
+def open_stage(
+    storyboard: Storyboard, *, interrupt: Interrupt | None = None, shots: Path | None = None
+) -> Iterator[DesktopStage]:
     """A container with the storyboard's app started, and its first window filling the monitor."""
     if storyboard.profile:
         raise _later("a profile")
@@ -319,6 +349,8 @@ def open_stage(storyboard: Storyboard, *, interrupt: Interrupt | None = None) ->
             raise RunError(str(exc)) from None
         # What runs is what counts: the label of the image said the same a moment ago, unless the image was replaced.
         images.check(docker, storyboard.app.image, built=started.get("build", ""))
-        yield DesktopStage(link, storyboard, timeout=timeout, first=started.get("title", ""), interrupt=interrupt)
+        yield DesktopStage(
+            link, storyboard, timeout=timeout, first=started.get("title", ""), interrupt=interrupt, shots=shots
+        )
     finally:
         link.close()

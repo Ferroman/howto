@@ -54,7 +54,7 @@ def open_stage(storyboard: Storyboard, *, headless: bool, interrupt: Interrupt |
             raise RunError("`--show` of a desktop app is not built yet")
         from .desktop.stage import open_stage as desktop
 
-        return desktop(storyboard, interrupt=interrupt)
+        return desktop(storyboard, interrupt=interrupt, shots=cache_dir() / "probe" / f"{storyboard.name}.png")
     from .capture import open_stage as browser
 
     return browser(storyboard, profiles_dir=profiles_dir(), headless=headless, interrupt=interrupt)

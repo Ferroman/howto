@@ -408,3 +408,72 @@ def test_a_recording_that_cannot_be_ended_ends_the_command(tmp_path):
     desk, _, _ = recording(tmp_path, ("record_stop", HelperError("internal", "RuntimeError: ffmpeg failed while recording")))
     with pytest.raises(RunError, match="the desktop failed: RuntimeError: ffmpeg failed while recording"):
         desk.stop_recording()
+
+
+def read(*lines):
+    return {"lines": [{"text": text, "box": list(box)} for text, box in lines]}
+
+
+def reporting(tmp_path, *script):
+    """A stage that saves the screenshot of its report."""
+    shots = tmp_path / "cache" / "probe" / "demo.png"
+    return *stage(*script, shots=shots), shots
+
+
+def test_the_report_has_the_words_that_the_outline_lacks_as_locators_to_copy(tmp_path):
+    lines = read(("Layer 1", (1620.4, 200.2, 61.5, 23.6)), ("Painted words", (40, 180, 250.0, 36.0)))
+    desk, link, shots = reporting(tmp_path, ("outline", outlined()), ("screenshot", {"path": "/tmp/howto/screen.png"}), ("words", lines))
+    page = desk.report(None, 20_000)
+    assert page.words == ('"Layer 1" {at: 1620x200, size: 62x24}', '"Painted words" {at: 40x180, size: 250x36}')
+    assert page.screenshot == str(shots) and shots.read_bytes() == b"fetched"
+    assert link.asked[1:] == [
+        ("screenshot", {}),
+        ("words", {"lacking": True, "within": None, "shot": "/tmp/howto/screen.png"}),
+    ]
+    assert link.fetched == [("/tmp/howto/screen.png", shots)]
+
+
+def test_the_words_of_a_report_are_limited_as_its_outline_is(tmp_path):
+    script = [("outline", outlined()), ("screenshot", {"path": "/s.png"}), ("words", read())]
+    desk, link, _ = reporting(tmp_path, *script)
+    desk.report(parse_locator({"role": "dialog"}, "x"), 20_000)
+    assert link.asked[2][1]["within"] == {"role": "dialog"}
+
+
+def test_the_words_get_what_the_outline_leaves_of_the_limit(tmp_path):
+    lines = read(("One", (0, 0, 10, 10)), ("Two", (0, 20, 10, 10)), ("Three", (0, 40, 10, 10)))
+    script = [("outline", outlined(outline="- frame")), ("screenshot", {"path": "/s.png"}), ("words", lines)]
+    desk, _, _ = reporting(tmp_path, *script)
+    # The outline has 7 characters, so 63 are left. A line of words costs about 30 with its line break: two fit.
+    page = desk.report(None, 70)
+    assert page.words == ('"One" {at: 0x0, size: 10x10}', '"Two" {at: 0x20, size: 10x10}')
+    assert page.omitted == len('"Three" {at: 0x40, size: 10x10}')
+
+
+def test_an_outline_that_was_cut_leaves_no_room_for_words(tmp_path):
+    lines = read(("One", (0, 0, 10, 10)))
+    desk, _, _ = reporting(tmp_path, ("outline", outlined()), ("screenshot", {"path": "/s.png"}), ("words", lines))
+    page = desk.report(None, 30)
+    assert page.words == () and page.omitted == 17 + len('"One" {at: 0x0, size: 10x10}')
+    assert page.screenshot
+
+
+def test_a_report_without_a_place_for_its_screenshot_asks_for_none(tmp_path):
+    desk, link = stage(("outline", outlined()))
+    page = desk.report(None, 20_000)
+    assert (page.words, page.screenshot) == ((), "")
+    assert [name for name, _ in link.asked] == ["outline"]
+
+
+def test_words_on_the_screen_are_pressed_without_asking_what_covers_them():
+    on_screen = {"count": 1, "box": [40, 180, 250, 36], "layer": "screen", "window": ""}
+    desk, link = stage(("find", on_screen), ("pointer", {}), ("click", {}))
+    desk.perform(action({"click": {"text": "Painted words"}}), Pace())
+    assert link.asked[1:] == [("pointer", {"x": 165.0, "y": 198.0, "seconds": 0.0}), ("click", {"hold": 0, "window": ""})]
+
+
+def test_words_that_are_nowhere_say_that_both_were_looked_at():
+    desk, _ = stage(("find", {"count": 0, "tried": ["tree", "screen"], "nearest": ["Export"]}))
+    assert failure(desk, {"click": {"text": "Exprot"}}) == (
+        'click text="Exprot": not in the tree, and no such words on the screen. The nearest words: "Export"'
+    )

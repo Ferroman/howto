@@ -94,33 +94,6 @@ def write_desktop_board(tmp_path, **extra):
     return path
 
 
-def write_desktop_board(tmp_path, **extra):
-    data = {
-        "title": "Demo",
-        "app": {"image": "howto-fixture", "run": "fixture --demo"},
-        "steps": [{"say": "Press A.", "do": [click("A")]}],
-        **extra,
-    }
-    path = tmp_path / "videos" / "desk.yaml"
-    path.parent.mkdir(exist_ok=True)
-    path.write_text(yaml.safe_dump(data), encoding="utf-8")
-    return path
-
-
-def test_a_storyboard_with_an_app_gets_the_desktop_stage(monkeypatch, sandbox, tmp_path, capsys):
-    opened = []
-
-    @contextlib.contextmanager
-    def desktop_stage(storyboard, *, interrupt=None):
-        opened.append(storyboard.app.run)
-        yield FakeStage()
-
-    monkeypatch.setattr("howto.desktop.stage.open_stage", desktop_stage)
-    assert cli.main(["probe", str(write_desktop_board(tmp_path))]) == 0
-    assert opened == ["fixture --demo"]
-    assert f"step 1 ok      {CLICK_A}" in capsys.readouterr().out
-
-
 def test_a_visible_window_of_a_desktop_app_is_not_built_yet(sandbox, tmp_path, capsys):
     assert cli.main(["probe", str(write_desktop_board(tmp_path)), "--show"]) == 1
     assert "`--show` of a desktop app is not built yet" in capsys.readouterr().err
@@ -136,13 +109,14 @@ def test_a_storyboard_with_an_app_gets_the_desktop_stage(monkeypatch, sandbox, t
     opened = []
 
     @contextlib.contextmanager
-    def desktop_stage(storyboard, *, interrupt=None):
-        opened.append(storyboard.app.run)
+    def desktop_stage(storyboard, *, interrupt=None, shots=None):
+        opened.append((storyboard.app.run, shots))
         yield FakeStage()
 
     monkeypatch.setattr("howto.desktop.stage.open_stage", desktop_stage)
     assert cli.main(["probe", str(write_desktop_board(tmp_path))]) == 0
-    assert opened == ["fixture --demo"]
+    # The screenshot of a probe goes into the cache, under the name of the storyboard.
+    assert opened == [("fixture --demo", sandbox.cache / "probe" / "desk.png")]
     assert f"step 1 ok      {CLICK_A}" in capsys.readouterr().out
 
 

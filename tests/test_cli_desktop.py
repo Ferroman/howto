@@ -175,3 +175,54 @@ def test_a_failed_step_of_a_desktop_take_writes_no_video(desktop, chromium, fake
     assert 'howto: step 1: click role=button name="Remove": not in the tree' in capsys.readouterr().err
     assert not (path.parent / "add.mp4").exists()
     assert list(sandbox.work.iterdir()) == []
+
+
+def test_a_probe_prints_the_words_that_the_outline_lacks_and_saves_a_screenshot(desktop, sandbox, tmp_path, capsys):
+    steps = [{"do": [{"wait_for": {"role": "button", "name": "Add"}}]}]
+    assert cli.main(["probe", str(write_board(tmp_path, desktop, steps))]) == 0
+    out = capsys.readouterr().out
+    assert "words on the screen that the outline lacks:\n" in out
+    (line,) = [line for line in out.splitlines() if line.startswith('- "Painted words" {at: ')]
+    assert " size: " in line and line.endswith("}")
+    shot = sandbox.cache / "probe" / "add.png"
+    assert out.rstrip().endswith(f"screenshot: {shot}")
+    assert shot.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def test_a_locator_that_the_probe_printed_names_the_same_place(desktop, sandbox, tmp_path, capsys):
+    steps = [{"do": [{"wait_for": {"role": "button", "name": "Add"}}]}]
+    path = write_board(tmp_path, desktop, steps)
+    assert cli.main(["probe", str(path)]) == 0
+    (line,) = [line for line in capsys.readouterr().out.splitlines() if line.startswith('- "Painted words" ')]
+    # The author copies the locator as it stands: {at: XxY, size: WxH}.
+    place = yaml.safe_load(line.split('" ', 1)[1])
+    steps.append({"do": [{"click": place}, {"wait_for": {"text": "Pressed once"}}]})
+    assert cli.main(["probe", str(write_board(tmp_path, desktop, steps))]) == 0
+    assert '- "Pressed once" {at: ' in capsys.readouterr().out
+
+
+def test_words_on_the_screen_are_named_as_text(desktop, sandbox, tmp_path, capsys):
+    steps = [{"do": [{"click": {"text": "Painted words"}}, {"wait_for": {"text": "Pressed once"}}]}]
+    assert cli.main(["probe", str(write_board(tmp_path, desktop, steps))]) == 0
+    assert "step 1 ok" in capsys.readouterr().out
+
+
+def test_words_that_are_nowhere_fail_the_step_with_the_nearest_words(desktop, sandbox, tmp_path, capsys, monkeypatch):
+    monkeypatch.setenv("HOWTO_ACTION_TIMEOUT", "3")
+    steps = [{"do": [{"click": {"text": "Paintd wrds"}}]}]
+    assert cli.main(["probe", str(write_board(tmp_path, desktop, steps))]) == 1
+    out = capsys.readouterr().out
+    assert 'step 1 FAILED  click text="Paintd wrds": not in the tree, and no such words on the screen. The nearest words: ' in out
+    assert '"Painted words"' in out.split("The nearest words: ")[1].splitlines()[0]
+
+
+def test_an_app_that_publishes_no_tree_is_probed_through_its_screen(desktop, sandbox, tmp_path, capsys):
+    # NO_AT_BRIDGE keeps a GTK 3 app from publishing its tree, as an app with a toolkit of its own would not.
+    steps = [{"do": [{"click": {"text": "Painted words"}}, {"wait_for": {"text": "Pressed once"}}]}]
+    path = write_board(tmp_path, desktop, steps)
+    path.write_text(path.read_text().replace(desktop.run, f"NO_AT_BRIDGE=1 {desktop.run}"), encoding="utf-8")
+    assert cli.main(["probe", str(path)]) == 0
+    out = capsys.readouterr().out
+    assert "step 1 ok" in out
+    assert "outline:\n(nothing is showing)\n" in out
+    assert '- "Pressed once" {at: ' in out

@@ -35,6 +35,10 @@ class PageReport:
     # What happened in the browser that the steps did not handle: a dialog
     # that was dismissed, a tab that opened.
     notices: tuple[str, ...] = ()
+    # What the report of a desktop adds. The words that the screen shows and the outline lacks,
+    # each as a line with a locator to copy, and the path of the screenshot. Both are empty for a web page.
+    words: tuple[str, ...] = ()
+    screenshot: str = ""
 
 
 # The actions that put the pointer on an element. A zoom aims at that element.
