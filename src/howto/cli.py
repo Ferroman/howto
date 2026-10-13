@@ -336,7 +336,7 @@ def cmd_voice(args: argparse.Namespace) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="howto", description="Narrated how-to videos and animated pictures of a web app, from a storyboard."
+        prog="howto", description="Narrated how-to videos and animated pictures of a web app or a Linux desktop app, from a storyboard."
     )
     commands = parser.add_subparsers(dest="command", required=True)
 
