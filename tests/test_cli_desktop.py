@@ -1,13 +1,16 @@
 """`howto probe` on a desktop storyboard, from the command to the report. These tests need Docker and the base image."""
 import json
+import subprocess
+import uuid
 
 import pytest
 import yaml
 
-from pictures import brightness, dimensions, psnr, still
+from pictures import brightness, dimensions, psnr, redness, still
 from howto import cli
 from howto.assemble import video_duration
-from howto.desktop import takelog
+from howto.desktop import profiles, stage, takelog, viewer
+from howto.desktop.link import open_link
 from howto.desktop.stage import PRESS
 from howto.errors import RunError
 from howto.tools import find_tool
@@ -97,17 +100,6 @@ def test_an_image_that_does_not_exist_exits_1_with_the_command_that_builds_it(de
     path.write_text(path.read_text().replace(desktop.image, "howto-no-such-image"), encoding="utf-8")
     assert cli.main(["probe", str(path)]) == 1
     assert "the image howto-no-such-image does not exist: run `docker build -t howto-no-such-image DIR`" in capsys.readouterr().err
-
-
-import json
-
-from pictures import brightness, dimensions, psnr, still
-
-from howto.assemble import video_duration
-from howto.desktop import takelog
-from howto.desktop.stage import PRESS
-from howto.errors import RunError
-from howto.tools import find_tool
 
 
 @pytest.fixture
@@ -228,5 +220,185 @@ def test_an_app_that_publishes_no_tree_is_probed_through_its_screen(desktop, san
     assert '- "Pressed once" {at: ' in out
 
 
-HOWTO_REQUIRE_DESKTOP=1 uv run --extra test pytest tests/test_cli_desktop.py -q -k "cut_of_the_larger" --basetemp=spike-out/zoom-check
-ls spike-out/zoom-check/*/ours.png spike-out/zoom-check/*/theirs.png
+
+def test_a_zoom_shows_a_cut_of_the_larger_recording_and_goes_wide_again(
+    desktop, chromium, fake_tts, real_ffmpeg, sandbox, tmp_path
+):
+    ffmpeg, ffprobe = real_ffmpeg
+    steps = [{"say": "Press Flash.", "do": [{"click": {"role": "button", "name": "Flash"}}], "pause": 1}]
+    path = write_board(tmp_path, desktop, steps, zoom=2)
+    assert cli.main(["render", str(path), "--keep-work"]) == 0
+    video = path.parent / "add.mp4"
+    (work,) = sandbox.work.iterdir()
+    log = takelog.read(work / "take.json")
+    assert dimensions(ffprobe, video) == (1280, 720) and dimensions(ffprobe, work / "capture.mkv") == (2560, 1440)
+    assert log.scale == 2
+    into, out = log.moves
+    assert into.factor == 2.0 and (out.left, out.top, out.factor) == (0.0, 0.0, 1.0)
+
+    def compare(at, cut):
+        ours = still(ffmpeg, video, at, tmp_path / "ours.png")
+        theirs = still(ffmpeg, work / "capture.mkv", log.head + at, tmp_path / "theirs.png", cut)
+        return psnr(ffmpeg, ours, theirs)
+
+    # Before the move the picture is the whole recording at half its size.
+    whole = "scale=1280:720:flags=bicubic"
+    assert compare(into.start - 0.2, whole) > 30
+    # Enlarged, it is a part of the recording at the recording's own size. `zoompan` cuts at even pixels.
+    # The ring of the click has gone by then.
+    left, top = (int(value * 2) // 2 * 2 for value in (into.left, into.top))
+    assert compare(out.start - 0.1, f"crop=1280:720:{left}:{top}") > 30
+    assert compare(out.start - 0.1, whole) < 25
+    # And wide again at the end.
+    assert compare(out.start + out.seconds + 0.3, whole) > 30
+
+
+def test_a_probe_names_what_the_crop_leaves_out(desktop, sandbox, tmp_path, capsys):
+    steps = [{"do": [{"click": {"role": "button", "name": "Flash"}}, {"circle": {"text": "Painted words"}}]}]
+    path = write_board(tmp_path, desktop, steps, crop={"role": "textbox", "name": "Name"})
+    assert cli.main(["probe", str(path)]) == 0
+    out = capsys.readouterr().out
+    assert 'note: click role=button name="Flash": the element is not inside the crop' in out
+    assert 'note: circle text="Painted words": the element is not inside the crop' in out
+
+
+def test_an_animated_picture_is_cut_to_its_crop_with_a_strip_for_the_note(
+    desktop, chromium, real_ffmpeg, sandbox, tmp_path, capsys
+):
+    _, ffprobe = real_ffmpeg
+    steps = [{
+        "note": "Type a name, then press Add.",
+        "do": [{"fill": {"label": "Name", "value": "sam"}}, {"arrow": {"role": "button", "name": "Add", "note": "Press this one"}}],
+        "pause": 1,
+    }]
+    # The top left quarter of the window: the form, and a part of what is painted under it.
+    path = write_board(tmp_path, desktop, steps, crop={"at": "0x0", "size": "640x360"})
+    assert cli.main(["animate", str(path), "--format", "gif", "--keep-work"]) == 0
+    gif = path.parent / "add.gif"
+    # 652 wide: 640 plus 12 pixels that are not the edge of the window; 418 tall: 360 plus a strip of 46 for the note.
+    assert f"{gif}  652x418" in capsys.readouterr().out
+    assert dimensions(ffprobe, gif) == (652, 418)
+    (work,) = sandbox.work.iterdir()
+    assert [shown.kind for shown in takelog.read(work / "take.json").shown] == ["strip", "click", "mark", "note"]
+    # The strip is dark from the first frame on, where the note's words are not.
+    assert max(brightness(gif, x=8, y=380, width=40, height=30)) < 60
+    # The arrow and its words are red, and nothing else in the fixture is.
+    reds = redness(gif, x=0, y=0, width=652, height=372)
+    assert max(reds) > reds[0] + 3
+
+
+def test_a_mark_is_drawn_in_a_video_and_goes_before_the_next_step(desktop, chromium, fake_tts, real_ffmpeg, sandbox, tmp_path):
+    steps = [
+        {"say": "This is the button.", "do": [{"spotlight": {"role": "button", "name": "Add"}}]},
+        {"say": "That was it.", "pause": 1},
+    ]
+    path = write_board(tmp_path, desktop, steps)
+    assert cli.main(["render", str(path), "--keep-work"]) == 0
+    (work,) = sandbox.work.iterdir()
+    (mark,) = takelog.read(work / "take.json").shown
+    assert mark.kind == "mark" and mark.fade == 0.25
+    # The app paints that part of its window white, far from the button. A spotlight darkens all but its target.
+    levels = brightness(path.parent / "add.mp4", x=560, y=625, width=160, height=40)
+    assert levels[round((mark.start + 0.5) * 25)] < 130
+    assert levels[round((mark.end + 0.2) * 25)] > 200
+
+
+@pytest.fixture
+def profile(desktop):
+    """The name of a profile that no other test has, removed with its volume after the test."""
+    name = f"test-{uuid.uuid4().hex[:8]}"
+    yield name
+    subprocess.run([*desktop.docker, "volume", "rm", "-f", profiles.volume(name)], capture_output=True)
+
+
+WAIT = [{"do": [{"wait_for": {"role": "button", "name": "Add"}}]}]
+
+
+def test_a_profile_that_was_never_made_stops_with_the_command_that_makes_it(desktop, sandbox, tmp_path, capsys, profile):
+    path = write_board(tmp_path, desktop, WAIT, profile=profile)
+    assert cli.main(["probe", str(path)]) == 1
+    assert f"howto: profile `{profile}` does not exist: run `howto login {profile} {path}`" in capsys.readouterr().err
+    # Docker makes a volume that a container names. The command stopped before any container did.
+    assert profiles.exists(desktop.docker, profile) is False
+
+
+def test_a_profile_keeps_the_home_of_the_app_and_a_run_without_one_starts_anew(desktop, sandbox, tmp_path, capsys, profile):
+    profiles.create(desktop.docker, profile)
+    wrote = write_board(tmp_path, desktop, WAIT, profile=profile, setup=[{"run": "echo kept > $HOME/kept.txt"}])
+    assert cli.main(["probe", str(wrote)]) == 0
+    again = write_board(tmp_path, desktop, WAIT, profile=profile, setup=[{"run": "test -f $HOME/kept.txt"}])
+    assert cli.main(["probe", str(again)]) == 0
+    capsys.readouterr()
+    fresh = write_board(tmp_path, desktop, WAIT, setup=[{"run": "test -f $HOME/kept.txt"}])
+    assert cli.main(["probe", str(fresh)]) == 1
+    assert "run test -f $HOME/kept.txt: it ended with exit code 1" in capsys.readouterr().out
+
+
+def test_an_app_gets_the_time_to_write_down_what_it_holds_when_the_run_ends(desktop, sandbox, tmp_path, profile):
+    profiles.create(desktop.docker, profile)
+    # A line of shell that stands for an app which saves its session when it is told to end.
+    saving = f"trap 'echo saved > $HOME/saved.txt' TERM; {desktop.run} & wait"
+    path = write_board(tmp_path, desktop, WAIT, profile=profile)
+    path.write_text(path.read_text().replace(desktop.run, saving), encoding="utf-8")
+    assert cli.main(["probe", str(path)]) == 0
+    after = write_board(tmp_path, desktop, WAIT, profile=profile, setup=[{"run": "test -f $HOME/saved.txt"}])
+    assert cli.main(["probe", str(after)]) == 0
+
+
+def connected(window):
+    """Waits until the page shows the monitor: noVNC then gives its canvas the size of the monitor."""
+    window.page.wait_for_function("(() => { const c = document.querySelector('canvas'); return c && c.width === 1280; })()", timeout=30_000)
+
+
+def press_on_the_monitor(window, x, y):
+    """A click of the person at a place of the monitor, through the page."""
+    box = window.page.locator("canvas").bounding_box()
+    window.page.mouse.click(box["x"] + box["width"] * x / 1280, box["y"] + box["height"] * y / 720)
+
+
+def painted_words(link):
+    reply = link.request("find", limit=30, locator={"text": "Painted words"}, timeout=5)
+    return reply["box"] if reply["count"] == 1 else None
+
+
+@pytest.mark.browser
+@pytest.mark.parametrize("view_only, pressed", [(False, True), (True, False)])
+def test_the_window_shows_the_monitor_and_only_a_sign_in_can_use_it(desktop, chromium, view_only, pressed):
+    link = open_link(desktop.docker, desktop.image, publish=viewer.PORT)
+    try:
+        link.request("start", limit=90, run=desktop.run, width=1280, height=720, timeout=60)
+        shown = link.request("show", limit=60, view_only=view_only)
+        window = viewer.Viewer(viewer.address(link.port(viewer.PORT), shown["password"], view_only=view_only), headless=True)
+        try:
+            connected(window)
+            x, y, width, height = painted_words(link)
+            # The painted part of the fixture changes its words when it is pressed.
+            press_on_the_monitor(window, x + width / 2, y + height / 2)
+            window.page.wait_for_timeout(1500)
+            assert (painted_words(link) is None) is pressed
+        finally:
+            window.close()
+    finally:
+        link.close()
+
+
+@pytest.mark.browser
+def test_login_makes_the_profile_and_shows_the_app_until_the_window_closes(desktop, chromium, sandbox, tmp_path, profile):
+    seen = []
+
+    class Visitor(viewer.Viewer):
+        """A person who looks at the app, presses its painted part, and closes the window."""
+
+        def __init__(self, url):
+            super().__init__(url, headless=True)
+
+        def wait(self):
+            connected(self)
+            seen.append(self.page.locator("canvas").bounding_box()["width"] > 100)
+
+    path = write_board(tmp_path, desktop, WAIT)
+    stage.login(cli.load(path), profile, open_viewer=Visitor)
+    assert seen == [True]
+    assert profiles.exists(desktop.docker, profile) is True
+    # The storyboard now starts on the profile that the login made.
+    assert cli.main(["probe", str(write_board(tmp_path, desktop, WAIT, profile=profile))]) == 0

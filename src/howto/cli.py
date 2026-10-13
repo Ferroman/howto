@@ -50,11 +50,10 @@ def _voice(storyboard: Storyboard) -> voices.Voice | None:
 def open_stage(storyboard: Storyboard, *, headless: bool, interrupt: Interrupt | None = None):
     """The stage of a storyboard: a container for one with `app`, the browser for one with `url`."""
     if storyboard.desktop:
-        if not headless:
-            raise RunError("`--show` of a desktop app is not built yet")
         from .desktop.stage import open_stage as desktop
 
-        return desktop(storyboard, interrupt=interrupt, shots=cache_dir() / "probe" / f"{storyboard.name}.png")
+        shots = cache_dir() / "probe" / f"{storyboard.name}.png"
+        return desktop(storyboard, interrupt=interrupt, shots=shots, show=not headless)
     from .capture import open_stage as browser
 
     return browser(storyboard, profiles_dir=profiles_dir(), headless=headless, interrupt=interrupt)
@@ -107,9 +106,26 @@ def _close_to_others(profile_dir: Path) -> None:
         raise RunError(f"cannot keep the profile {profile_dir} to yourself: {exc.strerror or exc}") from None
 
 
+def login_desktop(storyboard: Storyboard, profile: str) -> None:
+    """Starts the app of a desktop storyboard on a profile, in a window. The tests replace this name."""
+    from .desktop.stage import login as real
+
+    real(storyboard, profile)
+
+
 def cmd_login(args: argparse.Namespace) -> int:
     if not PROFILE_RE.match(args.profile):
         raise StoryboardError("profile: use letters, digits, `-` and `_` only")
+    if Path(args.url).is_file():
+        # A storyboard, not an address. The profile of a desktop app is made with the app itself.
+        storyboard = load(Path(args.url))
+        if not storyboard.desktop:
+            raise StoryboardError(
+                f"{args.url} is the storyboard of a web page: run `howto login {args.profile} {storyboard.url}`"
+            )
+        print(f"Sign in, then close the window. Profile: the Docker volume howto-profile-{args.profile}", flush=True)
+        login_desktop(storyboard, args.profile)
+        return 0
     target = profiles_dir() / args.profile
     _close_to_others(target)
     print(f"Sign in, then close the browser window. Profile: {target}")
@@ -236,8 +252,6 @@ def _file_size(path: Path) -> str:
 
 def cmd_animate(args: argparse.Namespace) -> int:
     storyboard = load(Path(args.storyboard))
-    if storyboard.desktop:
-        raise RunError("`howto animate` of a desktop app is not built yet")
     if args.width < 1:
         raise StoryboardError("--width must be 1 or more")
     formats = FORMATS if args.format == "both" else (args.format,)
@@ -252,10 +266,11 @@ def cmd_animate(args: argparse.Namespace) -> int:
     work = _work_dir(storyboard)
     keep = args.keep_work
     try:
-        video = work / "capture.webm"
+        video = work / ("capture.mkv" if storyboard.desktop else "capture.webm")
         # Nothing is spoken, so there are no clips and no `tts`.
         result = _record(storyboard, {}, video, animated=True)
         try:
+            length = result.timeline[-1].end
             picture = animate(
                 video=video,
                 length=result.timeline[-1].end,
@@ -268,6 +283,7 @@ def cmd_animate(args: argparse.Namespace) -> int:
                 work=work,
                 ffmpeg=ffmpeg,
                 img2webp=img2webp,
+                layer=_layer(storyboard, video, length, work),
             )
         except RunError:
             keep = True
@@ -324,9 +340,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     commands = parser.add_subparsers(dest="command", required=True)
 
-    p_login = commands.add_parser("login", help="open a browser window to sign in to a profile")
+    p_login = commands.add_parser("login", help="open a window to sign in to a profile")
     p_login.add_argument("profile")
-    p_login.add_argument("url")
+    p_login.add_argument("url", metavar="WHERE", help="the address to sign in at, or the storyboard of a desktop app")
     p_login.set_defaults(func=cmd_login)
     p_image = commands.add_parser("image", help="build the base image that the app of a desktop storyboard runs in")
     p_image.set_defaults(func=cmd_image)
@@ -336,7 +352,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_probe.add_argument("--until", type=int, metavar="N", help="stop after step N")
     p_probe.add_argument("--within", metavar="LOCATOR", help="limit the outline to one element, for example '{role: dialog}'")
     p_probe.add_argument("--max-chars", type=int, default=20_000, metavar="N", help="length limit of the outline (default 20000)")
-    p_probe.add_argument("--show", action="store_true", help="use a visible browser window")
+    p_probe.add_argument("--show", action="store_true", help="show the browser window, or the monitor of a desktop app")
     p_probe.set_defaults(func=cmd_probe)
 
     p_narrate = commands.add_parser("narrate", help="speak the narration only")

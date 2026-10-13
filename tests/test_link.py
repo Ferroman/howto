@@ -93,3 +93,24 @@ def test_docker_runs_in_a_session_of_its_own(link):
 def test_docker_that_cannot_be_started_is_a_run_error(tmp_path):
     with pytest.raises(RunError, match="cannot start Docker"):
         open_link([str(tmp_path / "no-docker")], "howto-fixture")
+
+
+def test_a_profile_is_mounted_as_the_home_and_a_port_is_published_on_this_machine_only(fake_docker):
+    opened = open_link(docker_command(), "howto-fixture", volume="howto-profile-demo", publish=6080)
+    opened.request("echo", limit=5)
+    opened.close(wait=0.5)
+    assert fake_docker.calls()[0] == [
+        "run", "--rm", "-i", "--init", "--shm-size=1g", "--name", opened.name,
+        "-v", "howto-profile-demo:/home/howto", "-p", "127.0.0.1::6080", "howto-fixture",
+    ]
+
+
+def test_the_port_of_this_machine_is_the_one_that_docker_chose(fake_docker, link):
+    assert link.port(6080) == 49153
+    assert fake_docker.calls()[-1] == ["port", link.name, "6080/tcp"]
+
+
+def test_a_port_that_docker_does_not_tell_is_a_run_error(link, monkeypatch):
+    monkeypatch.setenv("FAKE_DOCKER_DOWN", "1")
+    with pytest.raises(RunError, match="Docker does not say where port 6080 of the desktop is: Cannot connect"):
+        link.port(6080)

@@ -9,13 +9,14 @@ from . import atspi, keys, pointer, screen, tree, xinput
 from .protocol import Refusal
 from .record import Recorder
 from .session import Session
+from .watch import WEB_PORT, Watch
 
 # Seconds between two looks at the tree while `find` waits.
 LOOK_EVERY = 0.25
 # Milliseconds between two keys when nothing is being shown. With no pause at all xdotool loses keys.
 QUICK_KEY_MS = 1
 REQUESTS = ("start", "find", "pointer", "click", "type", "key", "scroll_to", "run", "outline",
-           "record_start", "record_stop", "screenshot", "words", "busy")
+           "record_start", "record_stop", "screenshot", "words", "busy", "show")
 
 
 def _with(why: str, said: str) -> str:

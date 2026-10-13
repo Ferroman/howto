@@ -123,6 +123,21 @@ class Link:
         if proc.wait() != 0 or not copied:
             raise RunError(f"cannot fetch {inside} from the desktop: {said[-1] if said else 'Docker sent no file'}")
 
+    def port(self, inside: int) -> int:
+        """The port of this machine at which Docker serves a port of the container."""
+        proc = subprocess.run(
+            [*self._docker, "port", self.name, f"{inside}/tcp"], capture_output=True, text=True, errors="replace"
+        )
+        lines = proc.stdout.strip().splitlines()
+        try:
+            # A line is an address and a port, as `127.0.0.1:49153`.
+            return int(lines[0].rsplit(":", 1)[1])
+        except (IndexError, ValueError):
+            said = proc.stderr.strip().splitlines()
+            raise RunError(
+                f"Docker does not say where port {inside} of the desktop is: {said[-1] if said else 'it gave no port'}"
+            ) from None
+
     def close(self, wait: float = 10.0) -> None:
         """Ends the container. The helper leaves when its stdin closes. A container that stays is removed."""
         process = self._process
@@ -141,10 +156,22 @@ class Link:
         process.stderr.close()
 
 
-def open_link(docker: list[str], image: str) -> Link:
-    """Starts a container of an image, whose main process is the helper."""
+def open_link(docker: list[str], image: str, *, volume: str | None = None, publish: int | None = None) -> Link:
+    """Starts a container of an image, whose main process is the helper.
+
+    `volume` is the Docker volume of a profile. It becomes the home of the
+    app's user. `publish` is a port of the container that Docker serves on
+    this machine, at a port that it chooses: `Link.port` tells which.
+    """
     name = f"howto-{os.getpid()}-{uuid.uuid4().hex[:8]}"
-    command = [*docker, "run", "--rm", "-i", "--init", "--shm-size=1g", "--name", name, image]
+    command = [*docker, "run", "--rm", "-i", "--init", "--shm-size=1g", "--name", name]
+    if volume is not None:
+        # A volume that is new gets what the image has in that folder, with its owner.
+        command += ["-v", f"{volume}:/home/howto"]
+    if publish is not None:
+        # On this machine only. No other machine of the network reaches it.
+        command += ["-p", f"127.0.0.1::{publish}"]
+    command.append(image)
     try:
         process = subprocess.Popen(
             command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0,

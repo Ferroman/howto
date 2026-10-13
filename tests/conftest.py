@@ -122,6 +122,8 @@ FAKE_DOCKER = '''
         no reply first, `hang` never answers, `die` ends with a message, and anything else gets
         its fields back.
     cp: writes a tar with one file, whose content is FAKE_DOCKER_FILE.
+    volume: `inspect` fails for a volume named in FAKE_DOCKER_NO_VOLUME. `create` prints the name.
+    port: prints 127.0.0.1:49153.
     Every call fails when FAKE_DOCKER_DOWN is set, as with a daemon that is not running.
     """
     import io, json, os, sys, tarfile, time
@@ -147,6 +149,16 @@ FAKE_DOCKER = '''
             sys.exit(1)
         build = os.environ.get("FAKE_DOCKER_BUILD")
         print(json.dumps({"howto.build": build} if build else None))
+        sys.exit(0)
+    if command == "volume":
+        name = args[-1]
+        if args[1] == "inspect" and name in os.environ.get("FAKE_DOCKER_NO_VOLUME", "").split():
+            sys.stderr.write(f"Error response from daemon: get {name}: no such volume\\n")
+            sys.exit(1)
+        print(name)
+        sys.exit(0)
+    if command == "port":
+        print("127.0.0.1:49153")
         sys.exit(0)
     if command == "cp":
         data = os.environ.get("FAKE_DOCKER_FILE", "the file").encode()
@@ -243,7 +255,7 @@ def fake_docker(tmp_path, monkeypatch):
     log = tmp_path / "docker.log"
     monkeypatch.setenv("HOWTO_DOCKER", str(program))
     monkeypatch.setenv("FAKE_DOCKER_LOG", str(log))
-    for name in ("FAKE_DOCKER_DOWN", "FAKE_DOCKER_FAIL", "FAKE_DOCKER_MISSING", "FAKE_DOCKER_BUILD", "FAKE_DOCKER_FILE"):
+    for name in ("FAKE_DOCKER_DOWN", "FAKE_DOCKER_FAIL", "FAKE_DOCKER_MISSING", "FAKE_DOCKER_BUILD", "FAKE_DOCKER_FILE", "FAKE_DOCKER_NO_VOLUME"):
         monkeypatch.delenv(name, raising=False)
 
     def calls() -> list[list[str]]:
