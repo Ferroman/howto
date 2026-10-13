@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator, Sequence
 
-from .. import marks, notes, zoom
+from .. import marks, notes, overlay, zoom
 from ..errors import RunError
 from ..probe import cut_outline
 from ..runner import Interrupt, PageReport, StepFailed
@@ -91,6 +91,7 @@ class DesktopStage:
         now=time.monotonic,
         sleep=time.sleep,
         shots: Path | None = None,
+        heights=overlay.strip_heights,
     ) -> None:
         self._link = link
         self._board = storyboard
@@ -115,6 +116,12 @@ class DesktopStage:
         self._marks: list[tuple[float, str]] = []
         # The part of the picture that an animated picture is cut to. None is the whole picture. See `crop_to`.
         self._crop: zoom.Box | None = None
+        # The strip for the notes of a cropped picture, and whether it lies outside the crop. See `crop_to`.
+        self._strip: zoom.Box | None = None
+        self._strip_outside = False
+        self._heights = heights
+        # The actions whose element the crop leaves out of the picture.
+        self._left_out: list[str] = []
 
     def _ask(self, request: str, *, limit: float = QUICK, **fields) -> dict:
         """One request to the helper. A request to stop is acted on before it and after it, never during it."""
@@ -164,6 +171,18 @@ class DesktopStage:
             if left <= 1e-6:
                 return
             self._sleep(min(left, 0.1))
+
+    def _check_crop(self, action: Action, box: zoom.Box) -> None:
+        """Keeps a note of an action whose element the crop leaves out of the picture.
+
+        The author of a storyboard is often a model that cannot look at the
+        picture, and a probe is where it learns that nothing would be seen.
+        """
+        if self._crop is None or zoom.inside(box, self._crop):
+            return
+        notice = f"{action.describe()}: the element is not inside the crop"
+        if notice not in self._left_out:
+            self._left_out.append(notice)
 
     def _point(self, found: Found) -> None:
         """Moves the pointer to the middle of what was found. In a take it travels there, and in a probe it jumps."""
@@ -224,10 +243,13 @@ class DesktopStage:
                 self._counted(action, {"tried": ["tree"], **reply})
         elif kind == "wait_for":
             self._find(action)
-        elif kind == "hover":
-            self._point(self._find(action))
         else:
-            self._press(self._find(action))
+            found = self._find(action)
+            self._check_crop(action, found.box)
+            if kind == "hover":
+                self._point(found)
+                return
+            self._press(found)
             if kind == "fill":
                 self._ask("key", keys="Control+A")
                 self._type(action.value, pace)
@@ -277,6 +299,7 @@ class DesktopStage:
         """Finds the element of a mark. With `draw` the mark goes into the log, and the take waits while it draws itself."""
         try:
             found = self._find(action)
+            self._check_crop(action, found.box)
             if not draw:
                 return
             if action.kind == "arrow":
@@ -301,8 +324,32 @@ class DesktopStage:
         self._marks = []
         self._wait(fade)
 
-    def crop_to(self, action: Action, notes: Sequence[str]) -> zoom.Box:
-        raise _later("`crop`")
+    def crop_to(self, action: Action, notes_: Sequence[str]) -> zoom.Box:
+        """Measures the part of the picture that an animated picture is cut to, and returns it.
+
+        The recording still shows the whole monitor, and whoever makes the
+        picture cuts it out. What changes here is where things are drawn. An
+        arrow stays inside the crop. The notes get a strip next to it, as tall
+        as the longest of them needs, and the picture grows by that strip.
+        """
+        try:
+            found = self._find(action)
+        except HelperError as exc:
+            raise self._refused(action, exc) from None
+        cut = zoom.crop(found.box, self.viewport)
+        if cut is None:
+            raise StepFailed(f"{action.describe()}: the element has no size, so there is no picture to cut to it")
+        self._crop, self._strip, self._strip_outside = cut, None, False
+        if not notes_:
+            return cut
+        # Chromium measures, and nothing stops it halfway: a request to stop is acted on before it and after it.
+        self._interrupt.check()
+        try:
+            tallest = max(self._heights(list(notes_), cut.width))
+        finally:
+            self._interrupt.check()
+        self._strip, self._strip_outside = zoom.strip(cut, tallest, self.viewport)
+        return zoom.union(cut, self._strip)
 
     def start_recording(self, path: Path) -> None:
         reply = self._ask("record_start", limit=2 * QUICK)
@@ -332,6 +379,10 @@ class DesktopStage:
         for start, html in self._marks:
             self._shown.append(Shown("mark", start, end, html, grow=marks.DRAW_MS / 1000))
         self._marks = []
+        if self._strip is not None and self._strip_outside:
+            # A strip outside the crop lies on a part of the monitor that is not the picture's subject,
+            # so it is there for the whole take, with a note or without.
+            self._shown.insert(0, Shown("strip", 0.0, end, notes.strip_html(self._strip)))
         if self._note is not None:
             self._shown.append(Shown("note", self._note[0], end, self._note[1]))
             self._note = None
@@ -343,7 +394,7 @@ class DesktopStage:
         self._shown.append(Shown("card", at, at + seconds + fade, notes.card_html(title), grow=fade, fade=fade))
 
     def show_note(self, text: str) -> None:
-        self._note = (self._time(), notes.note_html(text))
+        self._note = (self._time(), notes.note_html(text, self._strip))
 
     def hide_note(self) -> None:
         if self._note is not None:
@@ -367,6 +418,7 @@ class DesktopStage:
         for title in reply.get("windows", ()):
             if title and title not in known:
                 notices.append(f'a window opened that no step touched: "{title}"')
+        notices += self._left_out
         return PageReport(
             url=f"app {self._board.app.run}", title=reply.get("title", ""), outline=kept,
             omitted=omitted + words[1], notices=tuple(notices), words=words[0], screenshot=screenshot,

@@ -7,7 +7,7 @@ from howto.errors import RunError
 from howto import marks
 from howto.notes import note_html, ring_html
 from howto.zoom import Box
-from howto.overlay import changes, draw, frame_count, listing, state
+from howto.overlay import changes, draw, frame_count, listing, state, strip_heights
 from howto.tools import find_tool
 
 NOTE = Shown("note", 0.2, 0.6, "<div>Hi</div>")
@@ -129,3 +129,11 @@ def test_a_mark_draws_itself_frame_by_frame_and_fades_at_its_end(chromium, ffmpe
     # It fades over its last quarter of a second, and is gone at one second.
     assert 0 < alpha(ffmpeg, picture / "000024.png", **top) < alpha(ffmpeg, picture / "000015.png", **top)
     assert alpha(ffmpeg, picture / "000025.png", **top) == 0
+
+
+@pytest.mark.browser
+def test_a_longer_note_needs_a_taller_strip(chromium):
+    short, long = strip_heights(["Short.", "A note that is long enough to need a second line in a strip of this width."], 300)
+    # One line of 18 pixels at 1.35, with 10 pixels above it and under it.
+    assert short == pytest.approx(44.3, abs=1.0)
+    assert long > short + 20

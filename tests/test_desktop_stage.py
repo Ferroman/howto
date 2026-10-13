@@ -7,11 +7,11 @@ from fakes import FakeClock, ScriptedLink
 from howto.desktop import takelog
 from howto.desktop.link import HelperError
 from howto.desktop.stage import DesktopStage, PRESS, wire
-from howto import marks
+from howto import marks, notes
 from howto.zoom import Box
 from howto.errors import RunError
 from howto.runner import Interrupt, StepFailed
-from howto.storyboard import Pace, parse, parse_locator
+from howto.storyboard import Action, Pace, parse, parse_locator
 
 ADD = {"role": "button", "name": "Add"}
 FIND_ADD = ("find", {"locator": {"role": "button", "name": "Add"}, "timeout": 10})
@@ -283,18 +283,6 @@ def test_a_mark_of_a_probe_only_finds_its_element():
     desk.clear_marks(False)
     # `tight`: a mark goes around the words of a label, not around the room that the app gave it.
     assert link.asked == [FIND_ADD_FOR_A_MARK]
-
-
-@pytest.mark.parametrize(
-    "call, what",
-    [
-        (lambda desk: desk.crop_to(action({"click": ADD}), ()), "`crop`"),
-    ],
-)
-def test_what_a_take_needs_is_not_built_yet(call, what):
-    desk, _ = stage(("find", found()))
-    with pytest.raises(RunError, match=f"{what} of a desktop app is not built yet"):
-        call(desk)
 
 
 def recording(tmp_path, *script, first_frame=99.2, **options):
@@ -597,3 +585,134 @@ def test_a_mark_whose_element_is_not_found_fails_as_an_action_does(tmp_path):
     desk, _, _ = recording(tmp_path, ("find", {"count": 0, "tried": ["tree"], "nearest": ["Add"]}))
     with pytest.raises(StepFailed, match='circle role=button name="Addd": not in the tree. The nearest names: "Add"'):
         desk.mark(action({"circle": {"role": "button", "name": "Addd"}}), True)
+
+
+PANEL = found(x=101, y=51, width=338, height=248)
+# The element, with 12 pixels around it, at even numbers.
+CUT = Box(88, 38, 364, 274)
+
+
+def crop(written=ADD):
+    return Action(kind="crop", locator=parse_locator(written, "crop"))
+
+
+def no_notes(texts, width):
+    raise AssertionError("there is nothing to measure")
+
+
+def test_a_crop_is_the_element_with_a_margin_at_even_numbers():
+    desk, link = stage(("find", PANEL), heights=no_notes)
+    assert desk.crop_to(crop(), ()) == CUT
+    assert link.asked == [FIND_ADD]
+
+
+def test_a_crop_takes_an_area_that_the_storyboard_gives():
+    desk, link = stage(heights=no_notes)
+    assert desk.crop_to(crop({"at": "100x60", "size": "300x200"}), ()) == Box(88, 48, 324, 224)
+    assert link.asked == []
+
+
+def test_the_notes_get_a_strip_under_the_crop_and_the_picture_grows_by_it():
+    asked = []
+
+    def heights(texts, width):
+        asked.append((texts, width))
+        return [44.3, 68.6]
+
+    desk, _ = stage(("find", PANEL), heights=heights)
+    assert desk.crop_to(crop(), ("Short.", "A longer note.")) == Box(88, 38, 364, 344)
+    # As tall as the longest note needs, at an even number: 70.
+    assert asked == [(["Short.", "A longer note."], 364)]
+
+
+def test_a_crop_whose_element_has_no_size_has_no_picture():
+    desk, _ = stage(("find", found(width=0, height=0)))
+    with pytest.raises(StepFailed) as caught:
+        desk.crop_to(crop(), ())
+    assert str(caught.value) == 'crop role=button name="Add": the element has no size, so there is no picture to cut to it'
+
+
+def test_a_crop_that_is_not_found_fails_as_an_action_does():
+    desk, _ = stage(("find", {"count": 0, "tried": ["tree"], "nearest": []}))
+    with pytest.raises(StepFailed, match='crop role=button name="Add": not in the tree'):
+        desk.crop_to(crop(), ())
+
+
+def cropped(tmp_path, panel, *script, height=44.3):
+    """A stage that measured its crop for one note, and has started recording."""
+    clock = FakeClock()
+    desk, link = stage(
+        ("find", panel), ("record_start", {"first_frame": 99.5}), *script, STOP,
+        now=clock.now, sleep=clock.sleep, heights=lambda texts, width: [height] * len(texts),
+    )
+    desk.crop_to(crop(), ("Pick a role.",))
+    desk.start_recording(tmp_path / "capture.mkv")
+    return desk, link, clock
+
+
+def test_the_strip_is_there_for_the_whole_take_and_a_note_is_written_in_it(tmp_path):
+    desk, _, clock = cropped(tmp_path, PANEL)
+    clock.t += 0.5
+    desk.show_note("Pick a role.")
+    clock.t += 2.0
+    desk.hide_note()
+    clock.t += 1.0
+    strip, note = stopped(desk, tmp_path).shown
+    where = Box(88, 312, 364, 46)
+    assert (strip.kind, strip.start, strip.end, strip.html) == ("strip", 0.0, 3.5, notes.strip_html(where))
+    assert (note.kind, note.start, note.end, note.html) == ("note", 0.5, 2.5, notes.note_html("Pick a role.", where))
+
+
+def test_a_strip_inside_the_crop_is_shown_with_its_note_only(tmp_path):
+    # A crop as tall as the window leaves no room under it or above it.
+    desk, _, clock = cropped(tmp_path, found(x=0, y=0, width=1920, height=1080))
+    desk.show_note("Pick a role.")
+    clock.t += 1.0
+    (note,) = stopped(desk, tmp_path).shown
+    assert note.html == notes.note_html("Pick a role.", Box(0, 1034, 1920, 46))
+
+
+def test_an_arrow_of_a_cropped_take_stays_inside_the_crop(tmp_path):
+    target = Box(380, 60, 60, 30)
+    nothing = ("busy", lambda fields: {"shares": [0.0] * len(fields["areas"])})
+    desk, _, _ = cropped(tmp_path, PANEL, ("find", found(x=380, y=60, width=60, height=30)), nothing)
+    desk.mark(action({"arrow": ADD}), True)
+    candidates = marks.arrows(target, (1920, 1080), None, CUT)
+
+    def outside(point):
+        return point[0] < 92 or point[1] < 42 or point[0] > 448 or point[1] > 308
+
+    expected = marks.emptiest(candidates, [sum(map(outside, candidate.points)) for candidate in candidates])
+    mark = next(shown for shown in stopped(desk, tmp_path).shown if shown.kind == "mark")
+    assert mark.html == marks.layer(marks.arrow(expected), (1920, 1080))
+    assert not any(map(outside, expected.points))
+
+
+def test_a_probe_names_each_action_whose_element_the_crop_leaves_out():
+    near, far = found(x=120, y=60), found(x=900, y=600)
+    press, point = [("pointer", {}), ("click", {})], [("pointer", {})]
+    script = [
+        ("find", PANEL), ("find", near), *press, ("find", far), *press, ("find", far), ("find", far),
+        ("find", far), *point, ("find", far), *point, ("outline", outlined()),
+    ]
+    desk, _ = stage(*script, heights=no_notes)
+    desk.crop_to(crop(), ())
+    away = {"role": "button", "name": "Far"}
+    desk.perform(action({"click": ADD}), Pace())
+    desk.perform(action({"click": away}), Pace())
+    desk.mark(action({"circle": away}), False)
+    # A wait shows nothing, so it is not named. The same action twice is named once.
+    desk.perform(action({"wait_for": away}), Pace())
+    desk.perform(action({"hover": away}), Pace())
+    desk.perform(action({"hover": away}), Pace())
+    assert desk.report(None, 20_000).notices == (
+        'click role=button name="Far": the element is not inside the crop',
+        'circle role=button name="Far": the element is not inside the crop',
+        'hover role=button name="Far": the element is not inside the crop',
+    )
+
+
+def test_without_a_crop_nothing_is_left_out():
+    desk, _ = stage(("find", found(x=900, y=600)), ("pointer", {}), ("click", {}), ("outline", outlined()))
+    desk.perform(action({"click": ADD}), Pace())
+    assert desk.report(None, 20_000).notices == ()

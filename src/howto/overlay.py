@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Sequence
 
 from .desktop.takelog import Shown, TakeLog
+from .notes import STRIP_HEIGHTS, STRIP_STYLE
 from .errors import RunError
 
 FPS = 25
@@ -112,3 +113,26 @@ def draw(log: TakeLog, length: float, out_dir: Path) -> Path | None:
     frames = out_dir / "frames.txt"
     frames.write_text(listing([number for number, _ in plan], frame_count(length)), encoding="utf-8")
     return frames
+
+
+def strip_heights(texts: Sequence[str], width: float) -> list[float]:
+    """How tall each note is in a strip of this width.
+
+    The browser stage measures this in the page it films. A desktop has no
+    page, so it is measured in the Chromium that draws the overlay, where the
+    words have the size they will have in the picture.
+    """
+    from playwright.sync_api import Error, sync_playwright
+
+    try:
+        with sync_playwright() as playwright:
+            # Ctrl+C stays with howto, which acts on it when this has returned.
+            browser = playwright.chromium.launch(headless=True, handle_sigint=False)
+            try:
+                page = browser.new_page(viewport={"width": max(1, round(width)), "height": 600}, device_scale_factor=1)
+                return [float(height) for height in page.evaluate(STRIP_HEIGHTS, [list(texts), width, STRIP_STYLE])]
+            finally:
+                browser.close()
+    except Error as exc:
+        lines = str(exc).strip().splitlines()
+        raise RunError(f"cannot measure the notes of the picture: {lines[0] if lines else type(exc).__name__}") from None
