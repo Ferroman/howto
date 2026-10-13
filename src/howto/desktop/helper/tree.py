@@ -1,0 +1,179 @@
+"""The windows of an app as plain data: which element a locator names, and the outline a probe prints.
+
+Nothing here touches the accessibility bus, so it is tested on the host.
+`atspi` reads the bus and fills the nodes.
+"""
+from __future__ import annotations
+
+import difflib
+from dataclasses import dataclass, field
+from typing import Iterator
+
+Box = tuple[float, float, float, float]
+
+# What a label names: the roles that take a value from the user.
+CONTROLS = frozenset({"textbox", "combobox", "checkbox", "radio", "spinbutton", "slider", "listbox", "switch"})
+# What `select` chooses from: the roles of an item in a list that opened.
+OPTIONS = frozenset({"menuitem", "menuitemcheckbox", "menuitemradio", "listitem", "option", "treeitem", "cell"})
+# What can be disabled. A label that is not enabled is still only a label.
+PRESSABLE = CONTROLS | OPTIONS | {"button", "tab", "link", "menu"}
+# Roles that only hold other elements. Without a name, such an element gives way to what is in it.
+PLAIN = frozenset({
+    "filler", "group", "section", "scroll pane", "viewport", "split pane", "layered pane", "root pane",
+    "glass pane", "redundant object", "unknown", "invalid",
+})
+SHOWN_STATES = ("active", "checked", "pressed", "expanded", "selected", "focused")
+
+
+@dataclass
+class Node:
+    # The role, by its web name where it has one.
+    role: str
+    name: str = ""
+    # What a field or a label holds.
+    text: str = ""
+    # In pixels of the picture. None for an element that has no place.
+    box: Box | None = None
+    showing: bool = True
+    states: tuple[str, ...] = ()
+    # The words of the labels that name this control.
+    labels: tuple[str, ...] = ()
+    children: list["Node"] = field(default_factory=list)
+    pid: int = 0
+    # The accessible itself. Nothing in this module touches it.
+    ref: object = None
+
+
+def tidy(words: str) -> str:
+    """Words with every run of white space as one space."""
+    return " ".join(words.split())
+
+
+def on_picture(box: Box | None, picture: tuple[int, int]) -> bool:
+    """Whether a box has a size and at least a part of it lies in the picture."""
+    if box is None:
+        return False
+    x, y, width, height = box
+    return width > 0 and height > 0 and x < picture[0] and y < picture[1] and x + width > 0 and y + height > 0
+
+
+def says(wanted: str, got: str, exact: bool) -> bool:
+    """Whether `got` has the words: all of them and nothing else when `exact`, else as a part, in any case."""
+    wanted, got = tidy(wanted), tidy(got)
+    if exact:
+        return wanted == got
+    return bool(wanted) and wanted.casefold() in got.casefold()
+
+
+def fits(node: Node, locator: dict) -> bool:
+    exact = bool(locator.get("exact"))
+    if "role" in locator:
+        return node.role == locator["role"] and ("name" not in locator or says(locator["name"], node.name, exact))
+    if "label" in locator:
+        return node.role in CONTROLS and any(says(locator["label"], words, exact) for words in (node.name, *node.labels))
+    if "text" in locator:
+        return says(locator["text"], node.name, exact) or says(locator["text"], node.text, exact)
+    if "option" in locator:
+        return node.role in OPTIONS and tidy(node.name) == tidy(locator["option"])
+    return False
+
+
+def below(node: Node) -> Iterator[Node]:
+    """Every node under this one, in the order of the tree."""
+    for child in node.children:
+        yield child
+        yield from below(child)
+
+
+def match(
+    windows: list[Node], locator: dict, picture: tuple[int, int], hidden: bool = False
+) -> list[tuple[Node, Node]]:
+    """The elements that a locator names, each with its window, in the order of the tree.
+
+    Without `hidden`, only an element that is showing and has a place in the
+    picture counts.
+    """
+    if locator.get("within") is not None:
+        scopes = [(below(scope), window) for scope, window in match(windows, locator["within"], picture, hidden)]
+    else:
+        scopes = [(iter((window, *below(window))), window) for window in windows]
+    found: list[tuple[Node, Node]] = []
+    for candidates, window in scopes:
+        for node in candidates:
+            if not fits(node, locator) or any(node is seen for seen, _ in found):
+                continue
+            if hidden or (node.showing and on_picture(node.box, picture)):
+                found.append((node, window))
+    if "text" in locator:
+        # The smallest element that has the words, as on a web page, and not the ones around it.
+        found = [
+            (node, window) for node, window in found
+            if not any(other is inner for inner in below(node) for other, _ in found)
+        ]
+    nth = locator.get("nth")
+    return found if nth is None else found[nth:nth + 1]
+
+
+def _quoted(words: str) -> str:
+    return '"' + tidy(words).replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _line(node: Node) -> str:
+    line = f"- {node.role}"
+    if tidy(node.name):
+        line += f" {_quoted(node.name)}"
+    marks = [state for state in SHOWN_STATES if state in node.states]
+    if node.role in PRESSABLE and "enabled" not in node.states:
+        marks.append("disabled")
+    return line + "".join(f" [{mark}]" for mark in marks)
+
+
+def _lines(nodes: list[Node], picture: tuple[int, int], depth: int) -> list[str]:
+    lines: list[str] = []
+    for node in nodes:
+        if not node.showing:
+            continue
+        if (node.role in PLAIN and not tidy(node.name)) or not on_picture(node.box, picture):
+            # Nothing to name here. What is in it takes its place.
+            lines += _lines(node.children, picture, depth)
+            continue
+        inner = _lines(node.children, picture, depth + 1)
+        line = "  " * depth + _line(node)
+        held = tidy(node.text)
+        if inner:
+            lines.append(line + ":")
+            lines += inner
+        elif held and held != tidy(node.name):
+            lines.append(f"{line}: {held[:200]}")
+        else:
+            lines.append(line)
+    return lines
+
+
+def outline(windows: list[Node], picture: tuple[int, int]) -> str:
+    """The windows as a web outline is written: one line for each element, with its role and its name."""
+    return "\n".join(_lines(windows, picture, 0))
+
+
+def names(windows: list[Node], locator: dict, picture: tuple[int, int]) -> list[str]:
+    """What a locator could have meant: the names and the texts of the elements it could have matched."""
+    heard: list[str] = []
+    for window in windows:
+        for node in (window, *below(window)):
+            if not node.showing or not on_picture(node.box, picture):
+                continue
+            if "role" in locator and node.role != locator["role"]:
+                continue
+            if "label" in locator and node.role not in CONTROLS:
+                continue
+            heard += [tidy(words) for words in (node.name, node.text) if tidy(words)]
+    return heard
+
+
+def nearest(wanted: str, heard: list[str], most: int = 3) -> list[str]:
+    """The words closest to the ones that were asked for, the closest first, as they are written."""
+    written = {}
+    for words in heard:
+        written.setdefault(tidy(words).casefold(), tidy(words))
+    close = difflib.get_close_matches(tidy(wanted).casefold(), list(written), n=most, cutoff=0.6)
+    return [written[key] for key in close]
