@@ -12,11 +12,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator, Sequence
 
-from .. import notes, zoom
+from .. import marks, notes, zoom
 from ..errors import RunError
 from ..probe import cut_outline
 from ..runner import Interrupt, PageReport, StepFailed
-from ..storyboard import Action, Locator, Pace, Storyboard
+from ..storyboard import MARK_ACTIONS, Action, Locator, Pace, Storyboard
 from ..tools import action_timeout, docker_command
 from . import images, takelog
 from .link import HelperError, open_link
@@ -31,6 +31,12 @@ PRESS = 0.06
 # How fast the pointer travels in a take, in pixels of the picture a second, and its shortest and longest way.
 POINTER_SPEED = 1500.0
 POINTER_QUICKEST, POINTER_SLOWEST = 0.25, 0.9
+# For an arrow: how wide the area around each of its points is that the helper looks at, in pixels of the
+# picture, and from which part on that area counts as something.
+PATCH = 12.0
+BUSY_FROM = 0.1
+# Pixels at the edge of the picture where an arrow does not go, as on a web page.
+EDGE = 4.0
 
 
 @dataclass(frozen=True)
@@ -83,6 +89,7 @@ class DesktopStage:
         first: str = "",
         interrupt: Interrupt | None = None,
         now=time.monotonic,
+        sleep=time.sleep,
         shots: Path | None = None,
     ) -> None:
         self._link = link
@@ -103,6 +110,11 @@ class DesktopStage:
         self._head = 0.0
         self._shown: list[Shown] = []
         self._note: tuple[float, str] | None = None
+        self._sleep = sleep
+        # The marks that are on the picture now: when each was drawn, and its HTML.
+        self._marks: list[tuple[float, str]] = []
+        # The part of the picture that an animated picture is cut to. None is the whole picture. See `crop_to`.
+        self._crop: zoom.Box | None = None
 
     def _ask(self, request: str, *, limit: float = QUICK, **fields) -> dict:
         """One request to the helper. A request to stop is acted on before it and after it, never during it."""
@@ -130,7 +142,11 @@ class DesktopStage:
         if locator.at is not None:
             wide, tall = locator.size or (0, 0)
             return Found(zoom.Box(locator.at[0], locator.at[1], wide, tall))
-        reply = self._ask("find", limit=self.timeout + QUICK, locator=wire(locator), timeout=self.timeout)
+        fields = {"locator": wire(locator), "timeout": self.timeout}
+        if action.kind in MARK_ACTIONS:
+            # A mark goes around the words of a label, not around the room that the app gave it.
+            fields["tight"] = True
+        reply = self._ask("find", limit=self.timeout + QUICK, **fields)
         self._counted(action, reply)
         self._touched.add(reply.get("window", ""))
         return Found(zoom.Box(*reply["box"]), reply.get("window", ""))
@@ -138,6 +154,16 @@ class DesktopStage:
     def _time(self) -> float:
         """Seconds since the take began."""
         return self._now() - self._zero
+
+    def _wait(self, seconds: float) -> None:
+        """Lets a part of the take pass. In slices, so that a request to stop ends the wait at once."""
+        end = self._now() + seconds
+        while True:
+            self._interrupt.check()
+            left = end - self._now()
+            if left <= 1e-6:
+                return
+            self._sleep(min(left, 0.1))
 
     def _point(self, found: Found) -> None:
         """Moves the pointer to the middle of what was found. In a take it travels there, and in a probe it jumps."""
@@ -224,17 +250,56 @@ class DesktopStage:
     def zoom_out(self, animate: bool) -> None:
         pass
 
+    def _busy(self, candidates: Sequence[marks.Arrow], picture: zoom.Box) -> list[int]:
+        """For each way to draw an arrow, how many of its points lie on something, or outside the picture.
+
+        The browser stage asks the page what lies at each point. Here the
+        helper looks at a screenshot: a small area around a point that is
+        not of one colour has something in it. That also serves a canvas.
+        """
+        counts = [0] * len(candidates)
+        asked: list[tuple[int, list[float]]] = []
+        right, bottom = picture.x + picture.width - EDGE, picture.y + picture.height - EDGE
+        for index, candidate in enumerate(candidates):
+            for x, y in candidate.points:
+                if x < picture.x + EDGE or y < picture.y + EDGE or x > right or y > bottom:
+                    # An arrow must not leave the picture.
+                    counts[index] += 1
+                else:
+                    asked.append((index, [x - PATCH / 2, y - PATCH / 2, PATCH, PATCH]))
+        if asked:
+            shares = self._ask("busy", limit=2 * QUICK, areas=[area for _, area in asked])["shares"]
+            for (index, _), share in zip(asked, shares):
+                counts[index] += share > BUSY_FROM
+        return counts
+
     def mark(self, action: Action, draw: bool) -> None:
-        """Finds the element of a mark, as a probe does."""
-        if draw:
-            raise _later("a mark")
+        """Finds the element of a mark. With `draw` the mark goes into the log, and the take waits while it draws itself."""
         try:
-            self._find(action)
+            found = self._find(action)
+            if not draw:
+                return
+            if action.kind == "arrow":
+                picture = self._crop or zoom.Box(0, 0, *self.viewport)
+                candidates = marks.arrows(found.box, self.viewport, action.value, self._crop)
+                drawing = marks.arrow(marks.emptiest(candidates, self._busy(candidates, picture)))
+            else:
+                drawing = marks.SHAPES[action.kind](found.box, self.viewport)
         except HelperError as exc:
             raise self._refused(action, exc) from None
+        self._marks.append((self._time(), marks.layer(drawing, self.viewport)))
+        self._wait(marks.DRAW_MS / 1000)
 
     def clear_marks(self, animate: bool) -> None:
-        pass
+        """Takes every mark off the picture. With `animate` they fade, and the take waits for that."""
+        if not self._marks:
+            return
+        fade = marks.FADE_MS / 1000 if animate else 0.0
+        end = self._time() + fade
+        for start, html in self._marks:
+            self._shown.append(Shown("mark", start, end, html, grow=marks.DRAW_MS / 1000, fade=fade))
+        self._marks = []
+        self._wait(fade)
 
     def crop_to(self, action: Action, notes: Sequence[str]) -> zoom.Box:
         raise _later("`crop`")
@@ -247,6 +312,7 @@ class DesktopStage:
         self._head = max(0.0, self._zero - reply["first_frame"])
         self._shown = []
         self._note = None
+        self._marks = []
 
     def stop_recording(self) -> None:
         """Ends the recording, fetches it, and writes the log of the take beside it."""
@@ -263,6 +329,9 @@ class DesktopStage:
             # Nothing will be assembled, so there is nothing to fetch.
             return
         self._link.fetch(reply["path"], video)
+        for start, html in self._marks:
+            self._shown.append(Shown("mark", start, end, html, grow=marks.DRAW_MS / 1000))
+        self._marks = []
         if self._note is not None:
             self._shown.append(Shown("note", self._note[0], end, self._note[1]))
             self._note = None

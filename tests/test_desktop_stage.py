@@ -7,6 +7,8 @@ from fakes import FakeClock, ScriptedLink
 from howto.desktop import takelog
 from howto.desktop.link import HelperError
 from howto.desktop.stage import DesktopStage, PRESS, wire
+from howto import marks
+from howto.zoom import Box
 from howto.errors import RunError
 from howto.runner import Interrupt, StepFailed
 from howto.storyboard import Pace, parse, parse_locator
@@ -272,18 +274,21 @@ def test_a_zoom_of_a_probe_only_finds_its_target():
         desk.zoom_to(action({"click": ADD}), 2.0, False)
 
 
+FIND_ADD_FOR_A_MARK = ("find", {"locator": {"role": "button", "name": "Add"}, "timeout": 10, "tight": True})
+
+
 def test_a_mark_of_a_probe_only_finds_its_element():
     desk, link = stage(("find", found()))
     desk.mark(action({"circle": ADD}), False)
     desk.clear_marks(False)
-    assert link.asked == [FIND_ADD]
+    # `tight`: a mark goes around the words of a label, not around the room that the app gave it.
+    assert link.asked == [FIND_ADD_FOR_A_MARK]
 
 
 @pytest.mark.parametrize(
     "call, what",
     [
         (lambda desk: desk.crop_to(action({"click": ADD}), ()), "`crop`"),
-        (lambda desk: desk.mark(action({"circle": ADD}), True), "a mark"),
     ],
 )
 def test_what_a_take_needs_is_not_built_yet(call, what):
@@ -293,8 +298,9 @@ def test_what_a_take_needs_is_not_built_yet(call, what):
 
 
 def recording(tmp_path, *script, first_frame=99.2, **options):
-    """A stage that has started recording. The clock says 100 when the take begins."""
+    """A stage that has started recording. The clock says 100 when the take begins, and waiting moves it."""
     clock = FakeClock()
+    options.setdefault("sleep", clock.sleep)
     desk, link = stage(("record_start", {"first_frame": first_frame}), *script, now=clock.now, **options)
     desk.start_recording(tmp_path / "capture.mkv")
     return desk, link, clock
@@ -477,3 +483,117 @@ def test_words_that_are_nowhere_say_that_both_were_looked_at():
     assert failure(desk, {"click": {"text": "Exprot"}}) == (
         'click text="Exprot": not in the tree, and no such words on the screen. The nearest words: "Export"'
     )
+
+
+STOP = ("record_stop", {"path": "/x.mkv"})
+
+
+def test_a_mark_is_in_the_log_from_when_it_is_drawn_until_it_has_faded(tmp_path):
+    desk, link, clock = recording(tmp_path, ("find", found(x=100, y=40)), STOP)
+    clock.t += 1.0
+    desk.mark(action({"box": ADD}), True)
+    # The take waits while the mark draws itself.
+    assert clock.t == pytest.approx(101.6)
+    clock.t += 2.0
+    desk.clear_marks(True)
+    assert clock.t == pytest.approx(103.85)
+    (mark,) = stopped(desk, tmp_path).shown
+    assert (mark.kind, mark.start, mark.grow, mark.fade) == ("mark", 1.0, 0.6, 0.25)
+    assert mark.end == pytest.approx(3.85)
+    assert mark.html == marks.layer(marks.box(Box(100, 40, 80, 30), (1920, 1080)), (1920, 1080))
+    assert link.asked[1] == FIND_ADD_FOR_A_MARK
+
+
+@pytest.mark.parametrize("kind", ["circle", "underline", "spotlight"])
+def test_each_shape_is_the_one_that_a_web_page_gets(tmp_path, kind):
+    desk, _, _ = recording(tmp_path, ("find", found(x=100, y=40)), STOP)
+    desk.mark(action({kind: ADD}), True)
+    (mark,) = stopped(desk, tmp_path).shown
+    assert mark.html == marks.layer(marks.SHAPES[kind](Box(100, 40, 80, 30), (1920, 1080)), (1920, 1080))
+
+
+def test_marks_that_go_at_once_do_not_fade(tmp_path):
+    desk, _, clock = recording(tmp_path, ("find", found()), STOP)
+    desk.mark(action({"underline": ADD}), True)
+    desk.clear_marks(False)
+    assert clock.t == pytest.approx(100.6)
+    (mark,) = stopped(desk, tmp_path).shown
+    assert (mark.end, mark.fade) == (pytest.approx(0.6), 0.0)
+
+
+def test_a_mark_that_is_still_shown_ends_with_the_take(tmp_path):
+    desk, _, clock = recording(tmp_path, ("find", found()), STOP)
+    desk.mark(action({"spotlight": ADD}), True)
+    clock.t += 1.0
+    (mark,) = stopped(desk, tmp_path).shown
+    assert (mark.start, mark.end, mark.fade) == (0.0, pytest.approx(1.6), 0.0)
+
+
+def test_two_marks_go_together(tmp_path):
+    desk, _, clock = recording(tmp_path, ("find", found()), ("find", found(x=300)), STOP)
+    desk.mark(action({"box": ADD}), True)
+    desk.mark(action({"underline": ADD}), True)
+    desk.clear_marks(True)
+    first, second = stopped(desk, tmp_path).shown
+    assert (first.start, second.start) == (0.0, pytest.approx(0.6))
+    assert first.end == second.end == pytest.approx(1.45)
+
+
+def test_clearing_without_a_mark_does_nothing(tmp_path):
+    desk, link, clock = recording(tmp_path)
+    desk.clear_marks(True)
+    assert clock.t == 100.0 and [name for name, _ in link.asked] == ["record_start"]
+
+
+def test_a_request_to_stop_ends_the_wait_for_a_mark_at_once(tmp_path):
+    interrupt, waited = Interrupt(), []
+
+    def sleep(seconds):
+        waited.append(seconds)
+        interrupt.request()
+
+    desk, _, _ = recording(tmp_path, ("find", found()), interrupt=interrupt, sleep=sleep)
+    with pytest.raises(KeyboardInterrupt):
+        desk.mark(action({"circle": ADD}), True)
+    assert len(waited) == 1
+
+
+def quiet_around(candidate):
+    """A reply to `busy`: nothing around the points of one way to draw an arrow, and something everywhere else."""
+    quiet = {(round(x, 3), round(y, 3)) for x, y in candidate.points}
+
+    def reply(fields):
+        return {"shares": [0.0 if (round(x + 6, 3), round(y + 6, 3)) in quiet else 0.5 for x, y, _, _ in fields["areas"]]}
+
+    return reply
+
+
+def test_an_arrow_comes_from_the_side_where_the_screen_has_the_least(tmp_path):
+    candidates = marks.arrows(Box(900, 500, 120, 40), (1920, 1080), "Here")
+    script = [("find", found(x=900, y=500, width=120, height=40)), ("busy", quiet_around(candidates[2])), STOP]
+    desk, link, _ = recording(tmp_path, *script)
+    desk.mark(action({"arrow": {**ADD, "note": "Here"}}), True)
+    (mark,) = stopped(desk, tmp_path).shown
+    assert mark.html == marks.layer(marks.arrow(candidates[2]), (1920, 1080))
+    areas = link.asked[2][1]["areas"]
+    # Every point of the eight ways is asked about, with a small area around it.
+    assert len(areas) == sum(len(candidate.points) for candidate in candidates)
+    assert all(area[2:] == [12.0, 12.0] for area in areas)
+
+
+def test_a_point_outside_the_picture_counts_without_a_question(tmp_path):
+    # A target in the corner. Nothing is on the screen, so only the points outside the picture count.
+    candidates = marks.arrows(Box(4, 4, 60, 30), (1920, 1080))
+    script = [("find", found(x=4, y=4, width=60, height=30)), ("busy", lambda fields: {"shares": [0.0] * len(fields["areas"])}), STOP]
+    desk, link, _ = recording(tmp_path, *script)
+    desk.mark(action({"arrow": ADD}), True)
+    (mark,) = stopped(desk, tmp_path).shown
+    # The first way points to the middle of the picture and lies wholly inside. Of the ways that are as empty, it is taken.
+    assert mark.html == marks.layer(marks.arrow(candidates[0]), (1920, 1080))
+    assert len(link.asked[2][1]["areas"]) < sum(len(candidate.points) for candidate in candidates)
+
+
+def test_a_mark_whose_element_is_not_found_fails_as_an_action_does(tmp_path):
+    desk, _, _ = recording(tmp_path, ("find", {"count": 0, "tried": ["tree"], "nearest": ["Add"]}))
+    with pytest.raises(StepFailed, match='circle role=button name="Addd": not in the tree. The nearest names: "Add"'):
+        desk.mark(action({"circle": {"role": "button", "name": "Addd"}}), True)

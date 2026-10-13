@@ -4,7 +4,9 @@ import pytest
 from pictures import alpha
 from howto.desktop.takelog import Shown, TakeLog
 from howto.errors import RunError
+from howto import marks
 from howto.notes import note_html, ring_html
+from howto.zoom import Box
 from howto.overlay import changes, draw, frame_count, listing, state
 from howto.tools import find_tool
 
@@ -110,3 +112,20 @@ def test_a_ring_is_drawn_larger_as_it_spreads(chromium, ffmpeg, tmp_path):
     edge = {"x": 122, "y": 96, "width": 8, "height": 8}
     assert alpha(ffmpeg, frames.parent / "000001.png", **edge) == 0
     assert alpha(ffmpeg, frames.parent / "000008.png", **edge) > 0
+
+
+@pytest.mark.browser
+def test_a_mark_draws_itself_frame_by_frame_and_fades_at_its_end(chromium, ffmpeg, tmp_path):
+    html = marks.layer(marks.box(Box(200, 150, 120, 40), (640, 360)), (640, 360))
+    log = TakeLog(viewport=(640, 360), shown=(Shown("mark", 0.0, 1.0, html, grow=0.6, fade=0.25),))
+    frames = draw(log, 1.2, tmp_path / "overlay")
+    picture = frames.parent
+    # The stroke starts on the top edge, runs to the right and around, and comes up the left edge last.
+    top = {"x": 232, "y": 138, "width": 16, "height": 8}
+    left = {"x": 188, "y": 162, "width": 8, "height": 16}
+    assert alpha(ffmpeg, picture / "000000.png", **top) == 0
+    assert alpha(ffmpeg, picture / "000005.png", **top) > 0 and alpha(ffmpeg, picture / "000005.png", **left) == 0
+    assert alpha(ffmpeg, picture / "000015.png", **left) > 0
+    # It fades over its last quarter of a second, and is gone at one second.
+    assert 0 < alpha(ffmpeg, picture / "000024.png", **top) < alpha(ffmpeg, picture / "000015.png", **top)
+    assert alpha(ffmpeg, picture / "000025.png", **top) == 0
