@@ -1,5 +1,6 @@
 # Runs the unit tests, the browser tests and the installer test on a clean
-# Ubuntu, for the oldest and the newest Python that the package allows.
+# Ubuntu, for the oldest and the newest Python that the package allows, and
+# the desktop tests, which need Docker, once.
 name: tests
 
 on:
@@ -33,6 +34,24 @@ jobs:
       - name: Install Chromium
         run: uv run --extra test playwright install --with-deps chromium
       - name: Tests
-        run: uv run --extra test pytest -ra
+        run: uv run --extra test pytest -ra -m "not desktop"
       - name: Installer test
         run: bash install.test.sh
+  desktop:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      # A desktop test that is skipped is not a pass.
+      HOWTO_REQUIRE_DESKTOP: "1"
+      HOWTO_REQUIRE_BROWSER: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.0
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      - name: Install Chromium
+        run: uv run --extra test playwright install --with-deps chromium
+      - name: Build the base image
+        run: uv run howto image
+      - name: Desktop tests
+        run: uv run --extra test pytest -ra -m desktop

@@ -20,7 +20,7 @@ from .probe import format_report
 from .runner import Interrupt, RealClock, RunResult, run_probe, run_take
 from .storyboard import PROFILE_RE, Storyboard, load, parse_locator, read_yaml
 from .timeline import narration_only
-from .tools import find_tool
+from .tools import docker_command, find_tool
 
 
 def data_dir() -> Path:
@@ -44,12 +44,19 @@ def _voice(storyboard: Storyboard) -> voices.Voice | None:
     return voices.load(voices_dir(), storyboard.voice) if storyboard.voice else None
 
 
-# Playwright is imported only when a browser is needed. `howto --help` and
-# `howto narrate` then start without it, and the tests replace these two names.
+# Playwright and Docker are reached only when a stage is needed. `howto --help`
+# and `howto narrate` then start without either, and the tests replace these
+# two names.
 def open_stage(storyboard: Storyboard, *, headless: bool, interrupt: Interrupt | None = None):
-    from .capture import open_stage as real
+    """The stage of a storyboard: a container for one with `app`, the browser for one with `url`."""
+    if storyboard.desktop:
+        from .desktop.stage import open_stage as desktop
 
-    return real(storyboard, profiles_dir=profiles_dir(), headless=headless, interrupt=interrupt)
+        shots = cache_dir() / "probe" / f"{storyboard.name}.png"
+        return desktop(storyboard, interrupt=interrupt, shots=shots, show=not headless)
+    from .capture import open_stage as browser
+
+    return browser(storyboard, profiles_dir=profiles_dir(), headless=headless, interrupt=interrupt)
 
 
 def login(profile_dir: Path, url: str) -> None:
@@ -84,7 +91,7 @@ def _explain_failure(storyboard: Storyboard, result: RunResult) -> str:
     label = "setup" if failed.index == 0 else f"step {failed.index}"
     if failed.index == 0 and storyboard.profile:
         print(
-            f"howto: if the profile is signed out, run `howto login {storyboard.profile} {storyboard.url}`",
+            f"howto: if the profile is signed out, run `howto login {storyboard.profile} {storyboard.origin}`",
             file=sys.stderr,
         )
     return f"{label}: {failed.error}"
@@ -99,9 +106,26 @@ def _close_to_others(profile_dir: Path) -> None:
         raise RunError(f"cannot keep the profile {profile_dir} to yourself: {exc.strerror or exc}") from None
 
 
+def login_desktop(storyboard: Storyboard, profile: str) -> None:
+    """Starts the app of a desktop storyboard on a profile, in a window. The tests replace this name."""
+    from .desktop.stage import login as real
+
+    real(storyboard, profile)
+
+
 def cmd_login(args: argparse.Namespace) -> int:
     if not PROFILE_RE.match(args.profile):
         raise StoryboardError("profile: use letters, digits, `-` and `_` only")
+    if Path(args.url).is_file():
+        # A storyboard, not an address. The profile of a desktop app is made with the app itself.
+        storyboard = load(Path(args.url))
+        if not storyboard.desktop:
+            raise StoryboardError(
+                f"{args.url} is the storyboard of a web page: run `howto login {args.profile} {storyboard.url}`"
+            )
+        print(f"Sign in, then close the window. Profile: the Docker volume howto-profile-{args.profile}", flush=True)
+        login_desktop(storyboard, args.profile)
+        return 0
     target = profiles_dir() / args.profile
     _close_to_others(target)
     print(f"Sign in, then close the browser window. Profile: {target}")
@@ -168,6 +192,24 @@ def _record(storyboard: Storyboard, clips, video: Path, *, animated: bool = Fals
     return result
 
 
+def draw_overlay(log, length: float, out_dir: Path):
+    """Draws what lies over the recording of a desktop take. The tests replace this name."""
+    from .overlay import draw as real
+
+    return real(log, length, out_dir)
+
+
+def _layer(storyboard: Storyboard, video: Path, length: float, work: Path):
+    """What a desktop take lays on its recording: its log, and the pictures of its notes. None for a web take."""
+    if not storyboard.desktop:
+        return None
+    from .desktop import takelog
+    from .desktop.picture import Layer
+
+    log = takelog.read(takelog.beside(video))
+    return Layer(log, draw_overlay(log, length, work / "overlay"))
+
+
 def cmd_render(args: argparse.Namespace) -> int:
     storyboard = load(Path(args.storyboard))
     ffmpeg = find_tool("ffmpeg", "HOWTO_FFMPEG")
@@ -177,7 +219,7 @@ def cmd_render(args: argparse.Namespace) -> int:
     work = _work_dir(storyboard)
     keep = args.keep_work
     try:
-        video = work / "capture.webm"
+        video = work / ("capture.mkv" if storyboard.desktop else "capture.webm")
         result = _record(storyboard, clips, video)
         try:
             outputs = assembling.assemble(
@@ -189,6 +231,7 @@ def cmd_render(args: argparse.Namespace) -> int:
                 work=work,
                 ffmpeg=ffmpeg,
                 ffprobe=ffprobe,
+                layer=_layer(storyboard, video, assembling.length_of(result.timeline), work),
             )
         except RunError:
             keep = True
@@ -223,10 +266,11 @@ def cmd_animate(args: argparse.Namespace) -> int:
     work = _work_dir(storyboard)
     keep = args.keep_work
     try:
-        video = work / "capture.webm"
+        video = work / ("capture.mkv" if storyboard.desktop else "capture.webm")
         # Nothing is spoken, so there are no clips and no `tts`.
         result = _record(storyboard, {}, video, animated=True)
         try:
+            length = result.timeline[-1].end
             picture = animate(
                 video=video,
                 length=result.timeline[-1].end,
@@ -239,6 +283,7 @@ def cmd_animate(args: argparse.Namespace) -> int:
                 work=work,
                 ffmpeg=ffmpeg,
                 img2webp=img2webp,
+                layer=_layer(storyboard, video, length, work),
             )
         except RunError:
             keep = True
@@ -291,21 +336,23 @@ def cmd_voice(args: argparse.Namespace) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="howto", description="Narrated how-to videos and animated pictures of a web app, from a storyboard."
+        prog="howto", description="Narrated how-to videos and animated pictures of a web app or a Linux desktop app, from a storyboard."
     )
     commands = parser.add_subparsers(dest="command", required=True)
 
-    p_login = commands.add_parser("login", help="open a browser window to sign in to a profile")
+    p_login = commands.add_parser("login", help="open a window to sign in to a profile")
     p_login.add_argument("profile")
-    p_login.add_argument("url")
+    p_login.add_argument("url", metavar="WHERE", help="the address to sign in at, or the storyboard of a desktop app")
     p_login.set_defaults(func=cmd_login)
+    p_image = commands.add_parser("image", help="build the base image that the app of a desktop storyboard runs in")
+    p_image.set_defaults(func=cmd_image)
 
     p_probe = commands.add_parser("probe", help="run the steps without recording and describe the page")
     p_probe.add_argument("storyboard")
     p_probe.add_argument("--until", type=int, metavar="N", help="stop after step N")
     p_probe.add_argument("--within", metavar="LOCATOR", help="limit the outline to one element, for example '{role: dialog}'")
     p_probe.add_argument("--max-chars", type=int, default=20_000, metavar="N", help="length limit of the outline (default 20000)")
-    p_probe.add_argument("--show", action="store_true", help="use a visible browser window")
+    p_probe.add_argument("--show", action="store_true", help="show the browser window, or the monitor of a desktop app")
     p_probe.set_defaults(func=cmd_probe)
 
     p_narrate = commands.add_parser("narrate", help="speak the narration only")
@@ -338,6 +385,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_voice.set_defaults(func=cmd_voice)
     return parser
 
+
+def cmd_image(args: argparse.Namespace) -> int:
+    from .desktop import images
+
+    for tag in images.build(docker_command()):
+        print(tag)
+    return 0
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)

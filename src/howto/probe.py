@@ -36,6 +36,14 @@ def format_report(result: RunResult) -> str:
         lines.append(f'page: {page.url}  "{page.title}"')
         lines.append("outline:")
         lines.append(page.outline.rstrip("\n"))
-        if page.omitted:
+        if page.words:
+            lines.append("words on the screen that the outline lacks:")
+            lines.extend(f"- {words}" for words in page.words)
+        if page.omitted and page.words:
+            # The outline was printed whole, so what is missing is words.
+            lines.append(f"(words cut: {page.omitted} more characters; use --max-chars)")
+        elif page.omitted:
             lines.append(f"(outline cut: {page.omitted} more characters; use --within or --max-chars)")
+        if page.screenshot:
+            lines.append(f"screenshot: {page.screenshot}")
     return "\n".join(lines) + "\n"

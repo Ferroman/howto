@@ -2,10 +2,14 @@ import { model } from '@diagc/core';
 
 // The parts of howto, and what each hands to the next. cli.py calls the parts
 // in this order and passes the results on. Along the arrows, only runner.py
-// calls the next part itself: it drives capture.py through the Stage protocol,
-// and the tests put FakeStage in its place. Where the three commands part
-// ways, the label names the command. The helpers that several parts share
-// (timeline.py, zoom.py, marks.py, tools.py) are left out.
+// calls the next part itself: it drives a stage through the Stage protocol,
+// and the tests put FakeStage in its place. capture.py is the stage of a web
+// page, and desktop/stage.py the stage of a desktop app. Where the three
+// commands part ways, the label names the command. The helpers that several
+// parts share (timeline.py, zoom.py, marks.py, notes.py, tools.py) are left out.
+//
+// The stage of a desktop app. Nothing is drawn on its monitor, so it writes
+// down what the picture must show, and overlay.py draws that afterwards.
 //
 // The parts are not put in a boundary. The layout places whatever is outside a
 // boundary under it, so the speech command and the clips would leave narrate.py
@@ -23,6 +27,9 @@ const voices = part('voices', 'a clip to clone, and its words');
 const narrate = part('narrate', 'one kept clip per sentence');
 const runner = part('runner', 'setup, steps and cleanup');
 const capture = part('capture', 'the only Playwright import');
+const desktop = m.node('desktop', { type: 'c4-component', name: 'desktop/stage.py', technology: 'the stage of a desktop app' });
+const overlay = part('overlay', 'notes and marks, as pictures');
+const helper = m.node('helper', { type: 'c4-system-external', name: 'The helper', technology: 'in a Docker container' });
 const probe = part('probe', 'the probe report');
 const assemble = part('assemble', 'narration track and subtitles');
 const animation = part('animation', 'the frames that differ');
@@ -51,6 +58,14 @@ m.relate(storyboard, runner, { kind: 'sync', label: 'Setup, steps, cleanup' });
 m.relate(narrate, runner, { kind: 'sync', label: 'Clips pace the steps' });
 m.relate(runner, capture, { kind: 'sync', label: 'Actions, zoom, marks' });
 m.relate(capture, chromium, { kind: 'sync', label: 'Performs and records' });
+
+// The same run on a desktop app: a storyboard with `app` in place of `url`.
+m.relate(runner, desktop, { kind: 'sync', label: 'The same, for an app' });
+m.relate(desktop, helper, { kind: 'sync', label: 'Finds, clicks, records' });
+m.relate(desktop, overlay, { kind: 'sync', label: 'The log of the take' });
+m.relate(overlay, chromium, { kind: 'sync', label: 'Draws each change' });
+m.relate(overlay, assemble, { kind: 'sync', label: 'Pictures to lay on' });
+m.relate(overlay, animation, { kind: 'sync', label: 'Pictures to lay on' });
 
 // After the run, one part for each command.
 m.relate(runner, probe, { kind: 'sync', label: 'probe: steps, the page' });

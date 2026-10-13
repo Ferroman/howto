@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
 
+from .desktop import picture
 from .errors import RunError
 from .tools import run
 from .zoom import Box
@@ -34,6 +35,12 @@ HEAD = 0.2
 # and a GIF was a quarter smaller without it. An interface has few colours, so
 # the bands that dither hides are rare.
 PALETTE = "split[a][b];[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=none:diff_mode=rectangle"
+# The palette of a desktop picture is made from whole frames. `stats_mode=diff` counts, where a frame differs
+# from the one before, the colours that the frame before had there. The recording of a browser has noise in
+# every frame, so every colour is counted sooner or later. The recording of a desktop has none. What appears
+# and stays to the end, a dialog or a last row in a list, would never be counted, and would be drawn in the
+# nearest colour that something else has.
+PALETTE_WHOLE = "split[a][b];[a]palettegen[p];[b][p]paletteuse=dither=none:diff_mode=rectangle"
 
 
 @dataclass(frozen=True)
@@ -101,11 +108,30 @@ def listing(names: Sequence[str], counts: Sequence[int]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def gif_command(ffmpeg: str, frames: Path, last: int, out: Path) -> list[str]:
+def desktop_frames_command(
+    ffmpeg: str, video: Path, head: float, length: float, graph: str, overlay: str | None
+) -> list[str]:
+    """The same frames from the recording of a desktop take.
+
+    The part of the recording before the take is left out, and the overlay
+    is laid on before the picture is cut. `overlay` is the list of the
+    overlay's pictures, as ffmpeg finds it from the folder it runs in.
+    """
+    command = [ffmpeg, "-y", "-loglevel", "error", "-ss", f"{head:.3f}", "-t", f"{length:.3f}", "-i", str(video)]
+    if overlay is not None:
+        command += ["-f", "concat", "-safe", "0", "-i", overlay]
+    return command + [
+        "-an", "-filter_complex", graph, "-map", "[v]",
+        "-fps_mode", "vfr", "-frame_pts", "1",
+        "%06d.png",
+    ]
+
+
+def gif_command(ffmpeg: str, frames: Path, last: int, out: Path, palette: str = PALETTE) -> list[str]:
     return [
         ffmpeg, "-y", "-loglevel", "error",
         "-f", "concat", "-i", str(frames),
-        "-vf", PALETTE,
+        "-vf", palette,
         "-fps_mode", "vfr",
         # A GIF frame is shown until the next one, and the last has none. Its time is given in 1/100 s.
         "-final_delay", str(round(last * 100 / FPS)),
@@ -135,6 +161,7 @@ def animate(
     work: Path,
     ffmpeg: str,
     img2webp: str | None,
+    layer: "picture.Layer | None" = None,
 ) -> Picture:
     """Writes NAME.gif, NAME.webp or both. A failure leaves earlier pictures of that name as they were."""
     frames_dir = work / "frames"
@@ -145,10 +172,19 @@ def animate(
     # directory, and the list below names the frames without a path. The list
     # itself is named without one too: ffmpeg 6 puts the folder of the list in
     # front of every frame in it.
-    # A take that is hardly longer than the head is kept whole: a flash is better than no picture.
-    start = HEAD if length > 2 * HEAD else 0.0
-    length -= start
-    command = frames_command(ffmpeg, video.resolve(), start, length, filters(crop, viewport, width))
+    if layer is None:
+        # A take that is hardly longer than the head is kept whole: a flash is better than no picture.
+        start = HEAD if length > 2 * HEAD else 0.0
+        length -= start
+        command = frames_command(ffmpeg, video.resolve(), start, length, filters(crop, viewport, width))
+    else:
+        # A desktop take has no such head, because its overlay is laid on here, and so on its first frame too.
+        # What it leaves out is the part of the recording before the take. The list of the overlay's pictures
+        # is named from the folder of the frames, which keeps the name of the work folder out of the path.
+        listed = os.path.relpath(layer.frames, frames_dir) if layer.frames is not None else None
+        command = desktop_frames_command(
+            ffmpeg, video.resolve(), layer.log.head, length, picture.graph(layer, filters(crop, viewport, width)), listed
+        )
     run(command, "ffmpeg (frames)", cwd=frames_dir)
     names = sorted(path.name for path in frames_dir.glob("*.png"))
     if not names:
@@ -162,7 +198,9 @@ def animate(
     part = {kind: out_dir / f".{name}.{kind}.part" for kind in final}
     try:
         if "gif" in final:
-            run(gif_command(ffmpeg, Path(frames.name), counts[-1], part["gif"].resolve()), "ffmpeg (gif)", cwd=frames_dir)
+            palette = PALETTE if layer is None else PALETTE_WHOLE
+            command = gif_command(ffmpeg, Path(frames.name), counts[-1], part["gif"].resolve(), palette)
+            run(command, "ffmpeg (gif)", cwd=frames_dir)
         if "webp" in final:
             if img2webp is None:
                 raise RunError("img2webp: no program was given for the WebP")

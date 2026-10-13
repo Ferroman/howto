@@ -8,6 +8,7 @@ first. On a machine without Homebrew this changes nothing.
 from __future__ import annotations
 
 import os
+import shlex
 import shutil
 import subprocess
 from pathlib import Path
@@ -15,6 +16,43 @@ from pathlib import Path
 from .errors import RunError
 
 LINUXBREW_BIN = Path("/home/linuxbrew/.linuxbrew/bin")
+DEFAULT_TIMEOUT = 10.0
+
+# The key names that both stages accept: the same names Playwright presses and
+# `xdotool key` accepts. The helper keeps its own copy of this list, because it
+# imports nothing of howto, and a test compares the two.
+KEY_NAMES = (
+    "Enter",
+    "Tab",
+    "Escape",
+    "Backspace",
+    "space",
+    "Control+a",
+    "Control+c",
+    "Control+v",
+)
+
+
+def action_timeout() -> float:
+    """Seconds an element gets to appear."""
+    try:
+        seconds = float(os.environ.get("HOWTO_ACTION_TIMEOUT", ""))
+    except ValueError:
+        return DEFAULT_TIMEOUT
+    return seconds if seconds > 0 else DEFAULT_TIMEOUT
+
+
+def run_tool(name: str, *args: str, timeout: float | None = None) -> str:
+    """Runs a program, returning what it printed. A non-zero exit or a timeout is a failure."""
+    try:
+        done = subprocess.run([name, *args], capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise RunError(f"`{name}` took more than {timeout:g} s") from None
+    except FileNotFoundError:
+        raise RunError(f"`{name}` is not installed") from None
+    if done.returncode != 0:
+        raise RunError(f"`{name}` exited with {done.returncode}: {done.stderr.strip() or 'no output'}")
+    return done.stdout
 
 
 def find_tool(name: str, env_var: str, *, brew_bin: Path = LINUXBREW_BIN) -> str:
@@ -29,6 +67,17 @@ def find_tool(name: str, env_var: str, *, brew_bin: Path = LINUXBREW_BIN) -> str
         return found
     raise RunError(f"{name} not found: set {env_var} or install {name}")
 
+
+def docker_command() -> list[str]:
+    """The Docker command as HOWTO_DOCKER gives it: one program, or a program with words in front, as in `sudo docker`."""
+    written = os.environ.get("HOWTO_DOCKER") or "docker"
+    try:
+        words = shlex.split(written)
+    except ValueError as exc:
+        raise RunError(f"HOWTO_DOCKER: {exc}") from None
+    if not words or shutil.which(words[0]) is None:
+        raise RunError(f"{words[0] if words else 'docker'} not found: install Docker, or set HOWTO_DOCKER")
+    return words
 
 def run(cmd: list[str], what: str, *, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
     try:

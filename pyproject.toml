@@ -3,7 +3,7 @@
 # PyPI is another project.
 name = "howto-video"
 version = "0.1.0"
-description = "Narrated how-to videos and animated pictures of a web app, from a YAML storyboard"
+description = "Narrated how-to videos and animated pictures of a web app or a Linux desktop app, from a YAML storyboard"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
@@ -49,4 +49,7 @@ packages = ["src/howto"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = ["browser: needs Playwright's Chromium and a real ffmpeg"]
+markers = [
+  "browser: needs Playwright's Chromium and a real ffmpeg",
+  "desktop: needs Docker and the image that `howto image` builds",
+]

@@ -15,11 +15,12 @@ _spec.loader.exec_module(build_site)
 
 @pytest.fixture
 def repo(tmp_path):
-    """A stand-in repository: the five documents, a video, a picture, and a diagram with its live page."""
+    """A stand-in repository: the six documents, a video, a picture, and a diagram with its live page."""
     files = {
         "README.md": "# howto\n",
         "LICENSE": "MIT\n",
         "docs/guide.md": "# Guide\n",
+        "docs/desktop.md": "# Desktop\n",
         "docs/speech.md": "# Speech\n",
         "docs/internals.md": "# Internals\n",
         "skill/SKILL.md": "# Skill\n",
@@ -214,6 +215,7 @@ def test_the_staged_tree_has_the_documents_and_the_folders(repo):
     out = repo / "_build" / "docs"
     assert build_site.stage(repo, out) == []
     assert staged_files(out) == [
+        "desktop.md",
         "diagrams/html/index.html",
         "diagrams/html/parts.html",
         "diagrams/static/parts.png",

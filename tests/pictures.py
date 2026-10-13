@@ -1,6 +1,7 @@
 """What a test needs to know about a recording, a GIF or a WebP: its colours, its size and its timing."""
 from __future__ import annotations
 
+import re
 import struct
 import subprocess
 
@@ -65,3 +66,33 @@ def webp(path):
             times.append(int.from_bytes(body[12:15], "little"))
         at += 8 + length + (length & 1)
     return canvas, times, loops
+
+
+def alpha(ffmpeg, picture, *, x, y, width, height):
+    """How opaque one region of a picture is, from 0 (see-through) to 255."""
+    raw = subprocess.run(
+        [ffmpeg, "-loglevel", "error", "-i", str(picture),
+         "-vf", f"alphaextract,crop={width}:{height}:{x}:{y},scale=1:1:flags=area,format=gray", "-f", "rawvideo", "-"],
+        capture_output=True, check=True,
+    ).stdout
+    return raw[0]
+
+def still(ffmpeg, video, at, out, cut=None):
+    """One frame of a video as a PNG, through a chain of filters when `cut` is given."""
+    command = [ffmpeg, "-y", "-loglevel", "error", "-ss", f"{at:.3f}", "-i", str(video)]
+    if cut:
+        command += ["-vf", cut]
+    subprocess.run([*command, "-frames:v", "1", str(out)], check=True)
+    return out
+
+
+def psnr(ffmpeg, one, other):
+    """How alike two pictures of one size are, in dB. Above 30 they look the same."""
+    said = subprocess.run(
+        [ffmpeg, "-hide_banner", "-i", str(one), "-i", str(other), "-filter_complex", "psnr", "-f", "null", "-"],
+        capture_output=True, text=True, check=True,
+    ).stderr
+    found = re.search(r"average:([\d.]+|inf)", said)
+    assert found, said[-300:]
+    return float(found.group(1))
+

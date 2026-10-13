@@ -25,6 +25,7 @@ BRANCH = "main"
 PAGES = {
     "README.md": "index.md",
     "docs/guide.md": "guide.md",
+    "docs/desktop.md": "desktop.md",
     "docs/speech.md": "speech.md",
     "docs/internals.md": "internals.md",
     "skill/SKILL.md": "storyboard.md",

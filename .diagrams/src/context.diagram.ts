@@ -45,7 +45,20 @@ const picture = m.node('picture', {
   technology: 'NAME.gif, .webp',
 });
 
-machine.contains(storyboard, howto, browser, speech, ffmpeg, img2webp, video, picture);
+// A Linux app that is filmed runs in the container, from an image that the
+// user builds on howto's base image.
+const desktopApp = m.node('desktop-app', {
+  type: 'c4-system-external',
+  name: 'Your desktop app',
+  technology: 'Linux, in the container',
+});
+const docker = m.node('docker', {
+  type: 'c4-system-external',
+  name: 'Docker',
+  technology: 'a container for each run',
+});
+
+machine.contains(storyboard, howto, browser, docker, desktopApp, speech, ffmpeg, img2webp, video, picture);
 
 m.relate(person, agent, { kind: 'sync', label: 'Asks in one sentence' });
 m.relate(person, howto, { kind: 'sync', label: 'Signs in once: login' });
@@ -54,6 +67,9 @@ m.relate(agent, howto, { kind: 'sync', label: 'Probes, then renders' });
 m.relate(storyboard, howto, { kind: 'sync', label: 'The only input' });
 
 m.relate(howto, browser, { kind: 'sync', label: 'Performs and records' });
+
+m.relate(howto, docker, { kind: 'sync', label: 'Or: starts, asks, records' });
+m.relate(docker, desktopApp, { kind: 'sync', label: 'Clicks and types' });
 m.relate(browser, app, { kind: 'sync', label: 'Clicks and types' });
 m.relate(howto, speech, { kind: 'sync', label: 'One WAV per sentence' });
 m.relate(howto, ffmpeg, { kind: 'sync', label: 'Joins picture and sound' });

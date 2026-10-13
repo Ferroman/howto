@@ -15,20 +15,30 @@ import yaml
 
 from .errors import StoryboardError
 
-LOCATOR_FORMS = ("role", "label", "placeholder", "text", "testid", "css")
-LOCATOR_EXTRAS = ("name", "exact", "nth", "within")
+LOCATOR_FORMS = ("role", "label", "placeholder", "text", "testid", "css", "at")
+LOCATOR_EXTRAS = ("name", "exact", "nth", "within", "size")
+# The forms that only a web page has, and the one that only a desktop has.
+WEB_FORMS = ("placeholder", "testid", "css")
+DESKTOP_FORMS = ("at",)
 LOCATOR_ACTIONS = ("click", "hover", "scroll_to", "wait_for")
 VALUE_ACTIONS = {"fill": "value", "select": "option"}
-STRING_ACTIONS = ("goto", "press")
+STRING_ACTIONS = ("goto", "press", "type", "run")
+# The actions that only one kind of storyboard has, each with the reason.
+WEB_ACTIONS = {"goto": "an app has no addresses"}
+DESKTOP_ACTIONS = {"run": "it runs a command in the container of the app"}
 # Marks: drawn on the picture around an element, or beside it. They touch nothing on the page.
 MARK_ACTIONS = ("box", "circle", "underline", "spotlight", "arrow")
 # The marks that can show a few words. `text` already names an element, so the key is `note`.
 NOTED_MARKS = ("arrow",)
-TOP_FIELDS = ("title", "url", "steps", "profile", "viewport", "setup", "cleanup", "pace", "zoom", "crop", "voice")
+TOP_FIELDS = ("title", "url", "app", "steps", "profile", "viewport", "setup", "cleanup", "pace", "zoom", "crop", "voice")
 STEP_FIELDS = ("say", "do", "chapter", "note", "pause", "zoom")
 # How far the picture may be enlarged. At 4 a 1920-pixel page shows 480 pixels.
 MAX_ZOOM = 4.0
 PROFILE_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+# The name of a Docker image. It goes on a command line, so it must not look like an option.
+IMAGE_RE = re.compile(r"^[a-z0-9][a-z0-9._/:-]*$")
+# A place or a size on the picture of a desktop: 960x540.
+PLACE_RE = re.compile(r"^(\d{1,5})x(\d{1,5})$")
 VIEWPORT_RE = re.compile(r"^([1-9]\d{2,4})x([1-9]\d{2,4})$")
 # A sentence ends at ., ! or ? followed by white space. "2.5" has no white
 # space after its dot, so it stays whole.
@@ -68,6 +78,14 @@ class Locator:
     exact: bool = False
     nth: int | None = None
     within: "Locator | None" = None
+    # A place on the picture of a desktop, in its pixels: a point, or with `size` an area whose top left corner it is.
+    at: tuple[int, int] | None = None
+    size: tuple[int, int] | None = None
+
+    @property
+    def area(self) -> bool:
+        """Whether the locator gives something with a size. A point alone does not."""
+        return self.at is None or self.size is not None
 
     def describe(self) -> str:
         parts = []
@@ -75,6 +93,10 @@ class Locator:
             value = getattr(self, key)
             if value is not None:
                 parts.append(f"{key}={value}" if key == "role" else f'{key}="{value}"')
+        for key in ("at", "size"):
+            value = getattr(self, key)
+            if value is not None:
+                parts.append(f"{key}={value[0]}x{value[1]}")
         if self.exact:
             parts.append("exact")
         if self.nth is not None:
@@ -127,10 +149,19 @@ class Pace:
 
 
 @dataclass(frozen=True)
+class App:
+    """The desktop app that a storyboard films: the image it is in, and the line of shell that starts it."""
+
+    image: str
+    run: str
+
+
+@dataclass(frozen=True)
 class Storyboard:
     path: Path
     title: str
-    url: str
+    # The start page of a web storyboard. None for a desktop storyboard, which has `app`.
+    url: str | None
     steps: tuple[Step, ...]
     profile: str | None = None
     viewport: tuple[int, int] = (1920, 1080)
@@ -143,10 +174,25 @@ class Storyboard:
     crop: Locator | None = None
     # The name of the voice that speaks the narration. None is the speech command's own voice.
     voice: str | None = None
+    app: App | None = None
 
     @property
     def name(self) -> str:
         return self.path.stem
+
+    @property
+    def desktop(self) -> bool:
+        return self.app is not None
+
+    @property
+    def zooms(self) -> bool:
+        """Whether any step enlarges the picture."""
+        return self.zoom > 1 or any((step.zoom or 1) > 1 for step in self.steps)
+
+    @property
+    def origin(self) -> str:
+        """What `howto login` is given after the profile: the address of a web page, or the storyboard of a desktop app."""
+        return self.url if self.app is None else str(self.path)
 
 
 def split_sentences(text: str) -> tuple[str, ...]:
@@ -192,6 +238,27 @@ def _flag(value: object) -> bool | None:
     return value if isinstance(value, bool) else None
 
 
+def _place(value: object, where: str, example: str) -> tuple[int, int]:
+    match = PLACE_RE.match(value.strip()) if isinstance(value, str) else None
+    if not match:
+        raise StoryboardError(f"{where}: write it as XxY, for example {example}")
+    return int(match.group(1)), int(match.group(2))
+
+
+def _parse_place(data: dict, where: str) -> Locator:
+    """A point of the picture, or with `size` an area. It names no element, so nothing narrows it."""
+    for key in data:
+        if key not in ("at", "size"):
+            raise StoryboardError(f"{where}: `{key}` does not go with `at`")
+    at = _place(data["at"], f"{where}: `at`", "960x540")
+    size = None
+    if "size" in data:
+        size = _place(data["size"], f"{where}: `size`", "120x40")
+        if 0 in size:
+            raise StoryboardError(f"{where}: `size`: width and height must be more than 0")
+    return Locator(at=at, size=size)
+
+
 def parse_locator(data: object, where: str) -> Locator:
     if not isinstance(data, dict):
         raise StoryboardError(f"{where}: a locator must be a mapping, for example {{role: button, name: Save}}")
@@ -201,6 +268,10 @@ def parse_locator(data: object, where: str) -> Locator:
     forms = [key for key in LOCATOR_FORMS if key in data]
     if len(forms) != 1:
         raise StoryboardError(f"{where}: a locator needs exactly one of " + ", ".join(LOCATOR_FORMS))
+    if forms[0] == "at":
+        return _parse_place(data, where)
+    if "size" in data:
+        raise StoryboardError(f"{where}: `size` needs `at`")
     if "name" in data and "role" not in data:
         raise StoryboardError(f"{where}: `name` needs `role`")
     values = {forms[0]: _text(data[forms[0]], f"{where}: `{forms[0]}`")}
@@ -221,6 +292,75 @@ def parse_locator(data: object, where: str) -> Locator:
         nth=nth,
         within=parse_locator(within, f"{where}: `within`") if within is not None else None,
     )
+
+
+def _parse_app(value: object) -> App:
+    if not isinstance(value, dict):
+        raise StoryboardError("`app` must be a mapping with `image` and `run`")
+    unknown = [key for key in value if key not in ("image", "run")]
+    if unknown:
+        raise StoryboardError(f"`app`: unknown field `{unknown[0]}`")
+    for key in ("image", "run"):
+        if key not in value:
+            raise StoryboardError(f"`app`: missing field `{key}`")
+    image = _text(value["image"], "`app`: `image`")
+    if not IMAGE_RE.match(image):
+        raise StoryboardError("`app`: `image`: use the name of a Docker image, in small letters, for example howto-inkscape")
+    return App(image=image, run=_text(value["run"], "`app`: `run`"))
+
+
+def check_locator(locator: Locator, where: str, *, desktop: bool) -> None:
+    """Refuses a locator form that this kind of storyboard does not have."""
+    refused = WEB_FORMS if desktop else DESKTOP_FORMS
+    for form in refused:
+        if getattr(locator, form) is not None:
+            allowed = ", ".join(name for name in LOCATOR_FORMS if name not in refused)
+            if desktop:
+                raise StoryboardError(f"{where}: `{form}` is for a web page. A desktop storyboard can use {allowed}")
+            raise StoryboardError(f"{where}: `{form}` is for a desktop app. A web storyboard can use {allowed}")
+    if locator.within is not None:
+        if desktop and locator.within.at is not None:
+            raise StoryboardError(f"{where}: `within` takes a locator of the tree: role, label or text")
+        check_locator(locator.within, f"{where}: `within`", desktop=desktop)
+
+
+def _check_place(locator: Locator, where: str, viewport: tuple[int, int]) -> None:
+    if locator.at is None:
+        return
+    width, height = viewport
+    (x, y), (wide, tall) = locator.at, locator.size or (0, 0)
+    if x >= width or y >= height:
+        raise StoryboardError(f"{where}: `at` is outside the picture of {width}x{height}")
+    if x + wide > width or y + tall > height:
+        raise StoryboardError(f"{where}: `at` and `size` reach outside the picture of {width}x{height}")
+
+
+def _check_kind(storyboard: Storyboard) -> None:
+    """Refuses what only the other kind of storyboard has, and a place that the picture does not have."""
+    desktop = storyboard.app is not None
+    listed = [(f"`setup[{n}]`", action) for n, action in enumerate(storyboard.setup, 1)]
+    listed += [
+        (f"step {step.index}: `do[{n}]`", action) for step in storyboard.steps for n, action in enumerate(step.do, 1)
+    ]
+    listed += [(f"`cleanup[{n}]`", action) for n, action in enumerate(storyboard.cleanup, 1)]
+    refused = WEB_ACTIONS if desktop else DESKTOP_ACTIONS
+    for where, action in listed:
+        if action.kind in refused:
+            kind = "a web page" if desktop else "a desktop app"
+            raise StoryboardError(f"{where}: `{action.kind}` is for {kind}: {refused[action.kind]}")
+        if action.locator is None:
+            continue
+        check_locator(action.locator, f"{where}: `{action.kind}`", desktop=desktop)
+        _check_place(action.locator, f"{where}: `{action.kind}`", storyboard.viewport)
+        if action.kind in MARK_ACTIONS and not action.locator.area:
+            raise StoryboardError(
+                f"{where}: `{action.kind}` needs an area: add `size`, for example {{at: 900x500, size: 120x40}}"
+            )
+    if storyboard.crop is not None:
+        check_locator(storyboard.crop, "`crop`", desktop=desktop)
+        _check_place(storyboard.crop, "`crop`", storyboard.viewport)
+        if not storyboard.crop.area:
+            raise StoryboardError("`crop` needs an area: add `size`, for example {at: 900x500, size: 120x40}")
 
 
 def parse_action(data: object, where: str) -> Action:
@@ -346,9 +486,13 @@ def parse(data: object, path: Path) -> Storyboard:
     unknown = [key for key in data if key not in TOP_FIELDS]
     if unknown:
         raise StoryboardError(f"unknown field `{unknown[0]}`")
-    for key in ("title", "url", "steps"):
+    for key in ("title", "steps"):
         if key not in data:
             raise StoryboardError(f"missing field `{key}`")
+    if "url" in data and "app" in data:
+        raise StoryboardError("`url` and `app` do not go together: a storyboard films a web page or a desktop app")
+    if "url" not in data and "app" not in data:
+        raise StoryboardError("missing field `url`, for a web page, or `app`, for a desktop app")
     steps = data["steps"]
     if not isinstance(steps, list) or not steps:
         raise StoryboardError("`steps` must be a list with at least one step")
@@ -363,7 +507,8 @@ def parse(data: object, path: Path) -> Storyboard:
     storyboard = Storyboard(
         path=path,
         title=_text(data["title"], "`title`"),
-        url=_text(data["url"], "`url`"),
+        url=_text(data["url"], "`url`") if "url" in data else None,
+        app=_parse_app(data["app"]) if "app" in data else None,
         steps=tuple(parse_step(step, n) for n, step in enumerate(steps, 1)),
         profile=names["profile"],
         viewport=_parse_viewport(data.get("viewport")),
@@ -374,6 +519,7 @@ def parse(data: object, path: Path) -> Storyboard:
         crop=parse_locator(data["crop"], "`crop`") if data.get("crop") is not None else None,
         voice=names["voice"],
     )
+    _check_kind(storyboard)
     if storyboard.crop is not None:
         # A crop is one fixed part of the window, and a zoom moves the page under it.
         zoomed = [""] if storyboard.zoom > 1 else [f"step {step.index}: " for step in storyboard.steps if (step.zoom or 1) > 1]

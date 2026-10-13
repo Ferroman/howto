@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 import yaml
 
-from fakes import FakeClock, FakeStage
+from fakes import FAKE_LOG, FakeClock, FakeDesktopStage, FakeStage
 from howto import cli
 from howto.errors import RunError
 from howto.narrate import wav_duration
@@ -44,7 +44,8 @@ def write_board(tmp_path, second="Press Save.", **extra):
 def browser(monkeypatch, fakes):
     """Replaces Chromium with a FakeStage and real time with a FakeClock."""
     state = SimpleNamespace(
-        clock=FakeClock(), stage=None, opened=0, headless=None, options={}, interrupt=None, on_close=lambda: None
+        clock=FakeClock(), stage=None, opened=0, headless=None, options={}, interrupt=None, on_close=lambda: None,
+        kind=FakeStage,
     )
 
     @contextlib.contextmanager
@@ -52,7 +53,7 @@ def browser(monkeypatch, fakes):
         state.opened += 1
         state.headless = headless
         state.interrupt = interrupt
-        state.stage = FakeStage(state.clock, **state.options)
+        state.stage = state.kind(state.clock, **state.options)
         yield state.stage
         state.on_close()
 
@@ -79,6 +80,176 @@ def test_probe_show_uses_a_window(browser, tmp_path):
     assert cli.main(["probe", str(write_board(tmp_path)), "--show"]) == 0
     assert browser.headless is False
 
+
+def write_desktop_board(tmp_path, **extra):
+    data = {
+        "title": "Demo",
+        "app": {"image": "howto-fixture", "run": "fixture --demo"},
+        "steps": [{"say": "Press A.", "do": [click("A")]}],
+        **extra,
+    }
+    path = tmp_path / "videos" / "desk.yaml"
+    path.parent.mkdir(exist_ok=True)
+    path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    return path
+
+
+def test_show_asks_the_desktop_stage_for_a_window(monkeypatch, sandbox, tmp_path):
+    asked = []
+
+    @contextlib.contextmanager
+    def desktop_stage(storyboard, *, interrupt=None, shots=None, show=False):
+        asked.append(show)
+        yield FakeStage()
+
+    monkeypatch.setattr("howto.desktop.stage.open_stage", desktop_stage)
+    assert cli.main(["probe", str(write_desktop_board(tmp_path)), "--show"]) == 0
+    assert asked == [True]
+
+
+def test_login_with_a_desktop_storyboard_starts_its_app_on_the_profile(monkeypatch, sandbox, tmp_path, capsys):
+    started = []
+    monkeypatch.setattr(cli, "login_desktop", lambda storyboard, profile: started.append((storyboard.app.run, profile)))
+    path = write_desktop_board(tmp_path)
+    assert cli.main(["login", "demo", str(path)]) == 0
+    assert started == [("fixture --demo", "demo")]
+    assert capsys.readouterr().out == "Sign in, then close the window. Profile: the Docker volume howto-profile-demo\n"
+    # The profile of a desktop app is no folder of this machine.
+    assert not (sandbox.data / "profiles").exists()
+
+
+def test_login_with_the_storyboard_of_a_web_page_names_the_command_with_its_address(browser, tmp_path, capsys):
+    path = write_board(tmp_path)
+    assert cli.main(["login", "demo", str(path)]) == 2
+    err = capsys.readouterr().err
+    assert f"{path} is the storyboard of a web page: run `howto login demo http://demo.test`" in err
+    assert browser.opened == 0
+
+
+def test_login_with_a_desktop_storyboard_still_checks_the_name_of_the_profile(sandbox, tmp_path, capsys):
+    assert cli.main(["login", "../escape", str(write_desktop_board(tmp_path))]) == 2
+    assert "profile: use letters, digits, `-` and `_` only" in capsys.readouterr().err
+
+
+def frames_call(desk):
+    return next(line for line in desk.calls() if "-frame_pts" in line)
+
+
+def test_animate_of_a_desktop_storyboard_lays_the_overlay_on_and_then_cuts(desk, tmp_path, capsys):
+    path = write_desktop_board(tmp_path, crop={"role": "complementary", "name": "Panel"})
+    assert cli.main(["animate", str(path)]) == 0
+    called = frames_call(desk)
+    assert "-ss 0.700 -t " in called and "capture.mkv" in called
+    assert "-f concat -safe 0 -i ../overlay/frames.txt" in called
+    # The fake stage cuts to 340 by 250 at 100, 50.
+    assert "overlay=0:0:eof_action=repeat,crop=340:250:100:50,fps=12.5,mpdecimate[v]" in called
+    assert f"{path.parent / 'desk.gif'}  340x250" in capsys.readouterr().out
+    assert desk.log == FAKE_LOG and desk.length > 0
+
+
+def test_animate_of_a_desktop_take_that_shows_nothing_reads_its_recording_alone(desk, tmp_path):
+    desk.frames = False
+    assert cli.main(["animate", str(write_desktop_board(tmp_path))]) == 0
+    called = frames_call(desk)
+    assert "concat" not in called
+    assert "[0:v]fps=25,fps=12.5,scale=960:540:flags=lanczos,mpdecimate[v]" in called
+
+
+def test_an_overlay_that_cannot_be_drawn_keeps_the_work_folder_of_a_picture(desk, fakes, tmp_path, monkeypatch, capsys):
+    def failing(log, length, out_dir):
+        raise RunError("cannot draw the notes of the take: Executable doesn't exist")
+
+    monkeypatch.setattr(cli, "draw_overlay", failing)
+    assert cli.main(["animate", str(write_desktop_board(tmp_path))]) == 1
+    (work,) = fakes.sandbox.work.iterdir()
+    assert f"work directory kept: {work}" in capsys.readouterr().err
+
+
+def test_a_failed_setup_of_a_desktop_storyboard_names_its_file_for_the_login(browser, tmp_path, capsys):
+    path = write_desktop_board(tmp_path, profile="demo", setup=[{"wait_for": {"role": "heading", "name": "Home"}}])
+    browser.options = {"fail_on": {SETUP: "not in the tree"}}
+    assert cli.main(["probe", str(path)]) == 1
+    assert f"howto login demo {path}" in capsys.readouterr().err
+
+def test_a_storyboard_with_an_app_gets_the_desktop_stage(monkeypatch, sandbox, tmp_path, capsys):
+    opened = []
+
+    @contextlib.contextmanager
+    def desktop_stage(storyboard, *, interrupt=None, shots=None, show=False):
+        opened.append((storyboard.app.run, shots, show))
+        yield FakeStage()
+
+    monkeypatch.setattr("howto.desktop.stage.open_stage", desktop_stage)
+    assert cli.main(["probe", str(write_desktop_board(tmp_path))]) == 0
+    # The screenshot of a probe goes into the cache, under the name of the storyboard. Nobody watches.
+    assert opened == [("fixture --demo", sandbox.cache / "probe" / "desk.png", False)]
+    assert f"step 1 ok      {CLICK_A}" in capsys.readouterr().out
+
+
+@pytest.fixture
+def desk(browser, fakes, monkeypatch, tmp_path):
+    """A desktop take with a fake stage and a fake overlay. `calls()` lists how the fake ffmpeg was called."""
+    browser.kind = FakeDesktopStage
+    drawn = SimpleNamespace(log=None, length=None, frames=True)
+
+    def fake_draw(log, length, out_dir):
+        drawn.log, drawn.length = log, length
+        if not drawn.frames:
+            return None
+        out_dir.mkdir(parents=True)
+        (out_dir / "frames.txt").write_text("ffconcat version 1.0\n", encoding="utf-8")
+        return out_dir / "frames.txt"
+
+    monkeypatch.setattr(cli, "draw_overlay", fake_draw)
+    log = tmp_path / "ffmpeg.log"
+    monkeypatch.setenv("FAKE_FFMPEG_LOG", str(log))
+    drawn.calls = lambda: log.read_text(encoding="utf-8").splitlines()
+    return drawn
+
+
+def test_render_of_a_desktop_storyboard_leaves_the_head_out_and_lays_the_overlay_on(desk, tmp_path, capsys):
+    path = write_desktop_board(tmp_path)
+    assert cli.main(["render", str(path)]) == 0
+    assert capsys.readouterr().out.splitlines()[0] == str(path.parent / "desk.mp4")
+    assembly = desk.calls()[-1]
+    assert "-ss 0.700 -i " in assembly and "capture.mkv" in assembly
+    assert "-f concat -safe 0 -i frames.txt" in assembly
+    assert "[0:v]fps=25[base];[base][1:v]overlay=0:0:eof_action=repeat[v]" in assembly
+    # The overlay is drawn for the length of the take, from the log that the stage left.
+    assert desk.log == FAKE_LOG and desk.length > 0
+
+
+def test_a_desktop_take_that_shows_nothing_is_rendered_without_an_overlay(desk, tmp_path):
+    desk.frames = False
+    assert cli.main(["render", str(write_desktop_board(tmp_path))]) == 0
+    assert "[0:v]fps=25[v]" in desk.calls()[-1] and "concat" not in desk.calls()[-1]
+
+
+def test_the_work_folder_of_a_desktop_take_holds_its_recording_its_log_and_its_overlay(desk, fakes, tmp_path):
+    assert cli.main(["render", str(write_desktop_board(tmp_path)), "--keep-work"]) == 0
+    (work,) = fakes.sandbox.work.iterdir()
+    assert sorted(p.name for p in work.iterdir()) == ["capture.mkv", "narration.wav", "overlay", "take.json", "timeline.json"]
+
+
+def test_an_overlay_that_cannot_be_drawn_keeps_the_work_folder_and_the_earlier_video(desk, fakes, tmp_path, monkeypatch, capsys):
+    def failing(log, length, out_dir):
+        raise RunError("cannot draw the notes of the take: Executable doesn't exist")
+
+    monkeypatch.setattr(cli, "draw_overlay", failing)
+    path = write_desktop_board(tmp_path)
+    (path.parent / "desk.mp4").write_bytes(b"earlier video")
+    assert cli.main(["render", str(path)]) == 1
+    (work,) = fakes.sandbox.work.iterdir()
+    err = capsys.readouterr().err
+    assert f"work directory kept: {work}" in err and "cannot draw the notes of the take" in err
+    assert (path.parent / "desk.mp4").read_bytes() == b"earlier video"
+
+
+def test_a_failed_setup_of_a_desktop_storyboard_names_its_file_for_the_login(browser, tmp_path, capsys):
+    path = write_desktop_board(tmp_path, profile="demo", setup=[{"wait_for": {"role": "heading", "name": "Home"}}])
+    browser.options = {"fail_on": {SETUP: "not in the tree"}}
+    assert cli.main(["probe", str(path)]) == 1
+    assert f"howto login demo {path}" in capsys.readouterr().err
 
 def test_a_failed_probe_exits_1(browser, tmp_path, capsys):
     browser.options = {"fail_on": {CLICK_B: "0 elements match"}}

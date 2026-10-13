@@ -4,7 +4,6 @@ This is the only module that imports Playwright.
 """
 from __future__ import annotations
 
-import html
 import os
 import re
 import tempfile
@@ -17,43 +16,16 @@ from playwright.sync_api import Page, sync_playwright
 from playwright.sync_api import TimeoutError as PlaywrightTimeout
 
 from . import marks, zoom
+from .notes import STRIP_HEIGHTS, STRIP_STYLE, note_html, strip_html
 from .errors import RunError
 from .probe import cut_outline
 from .runner import POINTER_ACTIONS, Interrupt, PageReport, StepFailed
 from .storyboard import MARK_ACTIONS, Action, Locator, Pace, Storyboard
-
-DEFAULT_TIMEOUT = 10.0
+from .tools import KEY_NAMES, action_timeout
 # A probe describes the page a moment after the last action. The browser
 # reports a new tab only some 0.1 to 0.2 s after the click that opened it, and
 # there is no event that says "no tab is coming", so the wait is a fixed one.
 SETTLE_MS = 300
-# The note has a z-index because a spotlight would otherwise darken it: the
-# marks are shown after it, and what is shown later lies on top.
-NOTE_STYLE = (
-    "position:fixed;z-index:2;left:50%;bottom:48px;transform:translateX(-50%);max-width:70%;"
-    "padding:14px 22px;border-radius:10px;background:rgba(20,20,24,.88);color:#fff;"
-    "font:500 22px/1.35 system-ui,sans-serif;box-shadow:0 6px 24px rgba(0,0,0,.35)"
-)
-# In a picture that is cut to a crop, a note is not laid on the page: it is
-# written in a strip next to the crop, which `zoom.strip` places. The strip is
-# dark for the whole take, so that the page under it never shows.
-STRIP_COLOUR = "#17171c"
-STRIP_STYLE = (
-    f"box-sizing:border-box;padding:10px 14px;background:{STRIP_COLOUR};color:#fff;text-align:center;"
-    "font:500 18px/1.35 system-ui,sans-serif"
-)
-# How tall each note is in a strip of this width. It is measured in the page
-# with the page's own styles switched off, because the overlay layer cannot be
-# measured from outside.
-STRIP_HEIGHTS = """([texts, width, style]) => texts.map((text) => {
-  const probe = document.createElement('div');
-  probe.style.cssText = `all:initial;display:block;position:fixed;visibility:hidden;left:0;top:0;width:${width}px;${style}`;
-  probe.textContent = text;
-  document.documentElement.appendChild(probe);
-  const height = probe.getBoundingClientRect().height;
-  probe.remove();
-  return height;
-})"""
 # show_actions also writes each action's locator on the picture, for example
 # `Click get_by_role("button", name="Save")`, and has no option that turns it
 # off. An overlay may carry a style element, and this rule hides the element
@@ -180,34 +152,6 @@ MARK_BOX = """(element) => {
 # property on <html> is inherited there, and the marks take their opacity from it.
 MARK_FADE = "(property) => document.documentElement.style.setProperty(property, '0')"
 MARK_FADED = "(property) => document.documentElement.style.removeProperty(property)"
-
-
-def action_timeout() -> float:
-    """Seconds an element gets to appear."""
-    try:
-        seconds = float(os.environ.get("HOWTO_ACTION_TIMEOUT", ""))
-    except ValueError:
-        return DEFAULT_TIMEOUT
-    return seconds if seconds > 0 else DEFAULT_TIMEOUT
-
-
-def _placed(box: zoom.Box) -> str:
-    return f"position:fixed;left:{box.x:g}px;top:{box.y:g}px;width:{box.width:g}px;height:{box.height:g}px"
-
-
-def note_html(text: str, strip: zoom.Box | None = None) -> str:
-    """The note of a step: a box at the bottom of the window, or the words in the strip of a cropped picture."""
-    if strip is None:
-        return f'<div style="{NOTE_STYLE}">{html.escape(text)}</div>'
-    return (
-        f'<div style="{_placed(strip)};z-index:2;display:flex;align-items:center;justify-content:center;{STRIP_STYLE}">'
-        f"{html.escape(text)}</div>"
-    )
-
-
-def strip_html(strip: zoom.Box) -> str:
-    """The strip with no words in it."""
-    return f'<div style="{_placed(strip)};z-index:1;background:{STRIP_COLOUR}"></div>'
 
 
 def resolve(scope, locator: Locator):
@@ -344,6 +288,13 @@ class PlaywrightStage:
                 self.page.goto(action.value, timeout=self.timeout_ms * 3)
             elif action.kind == "press":
                 self.page.keyboard.press(action.value)
+            elif action.kind == "type":
+                # The same key names work on both stages. A name that both accepts is pressed;
+                # anything else is typed character by character, at the pace of the storyboard.
+                if action.value in KEY_NAMES:
+                    self.page.keyboard.press(action.value)
+                else:
+                    self.page.keyboard.type(action.value, delay=1000 / pace.typing)
             else:
                 target = self._one(action)
                 if action.kind in POINTER_ACTIONS:

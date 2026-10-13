@@ -12,10 +12,15 @@ from howto.animation import (
     frames_command,
     gif_command,
     listing,
+    PALETTE_WHOLE,
+    desktop_frames_command,
     shown,
     size,
     webp_command,
 )
+from howto import overlay
+from howto.desktop.picture import Layer
+from howto.desktop.takelog import TakeLog
 from howto.errors import RunError
 from howto.tools import find_tool
 from howto.zoom import Box
@@ -224,3 +229,105 @@ def test_a_name_with_a_percent_sign_is_not_read_as_a_pattern(tools, tmp_path):
     work.mkdir()
     picture = make(tools, tmp_path, work=work, name="50%d")
     assert picture.files["gif"].name == "50%d.gif" and picture.files["gif"].stat().st_size > 100
+
+
+def test_the_frames_command_of_a_desktop_take_leaves_the_head_out_and_lays_the_overlay_on(tmp_path):
+    graph = "[0:v]fps=25[base];[base][1:v]overlay=0:0:eof_action=repeat,fps=12.5,mpdecimate[v]"
+    command = desktop_frames_command("ffmpeg", tmp_path / "capture.mkv", 0.84, 6.5, graph, "../overlay/frames.txt")
+    joined = " ".join(command)
+    assert command[0] == "ffmpeg" and command[-1] == "%06d.png"
+    # Both limit the recording, not the output, and the overlay is read whole.
+    assert joined.index("-ss 0.840 -t 6.500") < joined.index(f"-i {tmp_path / 'capture.mkv'}") < joined.index("-f concat")
+    assert "-f concat -safe 0 -i ../overlay/frames.txt" in joined
+    assert command[command.index("-filter_complex") + 1] == graph and "-map [v]" in joined
+    assert "-fps_mode vfr" in joined and "-frame_pts 1" in joined and "-vf" not in command
+
+
+def test_a_desktop_take_that_shows_nothing_has_one_input(tmp_path):
+    command = desktop_frames_command("ffmpeg", tmp_path / "capture.mkv", 0.0, 2.0, "[0:v]fps=25,fps=12.5[v]", None)
+    assert command.count("-i") == 1 and "concat" not in command
+
+
+def test_the_palette_of_a_desktop_picture_is_made_from_whole_frames(tmp_path):
+    command = gif_command("ffmpeg", tmp_path / "frames.txt", 27, tmp_path / "out.part", PALETTE_WHOLE)
+    chain = command[command.index("-vf") + 1]
+    assert "palettegen[p]" in chain and "stats_mode" not in chain
+    assert "dither=none" in chain and "diff_mode=rectangle" in chain
+
+
+def desktop_take(ffmpeg, work):
+    """What a desktop take leaves in its work folder.
+
+    The recording has four seconds. Its first second, before the take, is
+    blue, and the rest is white. The overlay shows nothing for the first
+    second of the take, and then a red square that stays to the end.
+    """
+    (work / "overlay").mkdir(parents=True, exist_ok=True)
+    video = work / "capture.mkv"
+    subprocess.run(
+        [ffmpeg, "-y", "-loglevel", "error",
+         "-f", "lavfi", "-i", "color=c=white:s=320x240:r=25:d=4",
+         "-f", "lavfi", "-i", "color=c=blue:s=320x240:r=25:d=4",
+         "-filter_complex", "[0][1]overlay=enable='lt(t,1)'",
+         "-c:v", "libx264", "-preset", "ultrafast", "-crf", "12", "-pix_fmt", "yuv420p", str(video)],
+        check=True,
+    )
+    for name, square in (("000000.png", ""), ("000025.png", ",drawbox=x=100:y=100:w=80:h=80:color=red@1.0:t=fill:replace=1")):
+        # In the folder of the pictures, under a name without a path: ffmpeg reads a % in the path of a picture as a pattern.
+        subprocess.run(
+            [ffmpeg, "-y", "-loglevel", "error", "-f", "lavfi", "-i", f"color=c=black@0.0:s=320x240,format=rgba{square}",
+             "-frames:v", "1", name],
+            check=True, cwd=work / "overlay",
+        )
+    frames = work / "overlay" / "frames.txt"
+    frames.write_text(overlay.listing([0, 25], 75), encoding="utf-8")
+    return video, Layer(TakeLog(viewport=(320, 240), head=1.0), frames)
+
+
+def make_desktop(tools, tmp_path, work=None, **changes):
+    ffmpeg, _, img2webp = tools
+    work = work or tmp_path / "work"
+    video, layer = desktop_take(ffmpeg, work)
+    options = dict(
+        video=video, length=3.0, crop=None, viewport=(320, 240), width=160, formats=("gif",), name="demo",
+        out_dir=tmp_path / "out", work=work, ffmpeg=ffmpeg, img2webp=img2webp, layer=layer,
+    )
+    options.update(changes)
+    return animate(**options)
+
+
+def test_a_desktop_picture_leaves_out_what_was_recorded_before_the_take(tools, tmp_path):
+    picture = make_desktop(tools, tmp_path)
+    # The whole take: three seconds are 38 frames of 0.08 s. Nothing of the take is left out, as a web picture's head is.
+    assert picture.seconds == pytest.approx(3.04)
+    first = region(picture.files["gif"], x=0, y=0, width=40, height=40)[0]
+    assert min(first) > 200, "the blue second before the take is in the picture"
+
+
+def test_the_overlay_is_laid_on_a_desktop_picture_at_its_time(tools, tmp_path):
+    picture = make_desktop(tools, tmp_path)
+    gif = picture.files["gif"]
+    # The square is at 100 to 180 of 320 pixels, and the picture is half as wide.
+    square = region(gif, x=55, y=55, width=30, height=30)
+    # It appears and stays to the end. The palette of a web picture has no red for that: see PALETTE_WHOLE.
+    assert square[0][1] > 200 and square[-1][0] > 200 and square[-1][1] < 60
+    (_, first_length), (second_start, _) = gif_frames(tools[1], gif)
+    assert second_start == pytest.approx(1.0, abs=0.09) and first_length == pytest.approx(1.0, abs=0.09)
+
+
+def test_the_overlay_is_laid_on_before_the_picture_is_cut(tools, tmp_path):
+    picture = make_desktop(tools, tmp_path, crop=Box(100, 100, 80, 80))
+    assert (picture.width, picture.height) == (80, 80)
+    red, green, _ = region(picture.files["gif"], x=10, y=10, width=60, height=60)[-1]
+    assert red > 200 and green < 60
+
+
+def test_a_desktop_take_that_shows_nothing_becomes_a_picture_of_its_recording(tools, tmp_path):
+    video, layer = desktop_take(tools[0], tmp_path / "work")
+    picture = make_desktop(tools, tmp_path, layer=Layer(layer.log, None))
+    assert min(region(picture.files["gif"], x=55, y=55, width=30, height=30)[-1]) > 200
+
+
+def test_a_work_folder_with_a_percent_sign_holds_a_desktop_take_too(tools, tmp_path):
+    picture = make_desktop(tools, tmp_path, work=tmp_path / "50%d-work")
+    assert region(picture.files["gif"], x=55, y=55, width=30, height=30)[-1][0] > 200
