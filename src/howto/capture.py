@@ -21,8 +21,7 @@ from .errors import RunError
 from .probe import cut_outline
 from .runner import POINTER_ACTIONS, Interrupt, PageReport, StepFailed
 from .storyboard import MARK_ACTIONS, Action, Locator, Pace, Storyboard
-
-DEFAULT_TIMEOUT = 10.0
+from .tools import KEY_NAMES, action_timeout
 # A probe describes the page a moment after the last action. The browser
 # reports a new tab only some 0.1 to 0.2 s after the click that opened it, and
 # there is no event that says "no tab is coming", so the wait is a fixed one.
@@ -182,15 +181,6 @@ MARK_FADE = "(property) => document.documentElement.style.setProperty(property, 
 MARK_FADED = "(property) => document.documentElement.style.removeProperty(property)"
 
 
-def action_timeout() -> float:
-    """Seconds an element gets to appear."""
-    try:
-        seconds = float(os.environ.get("HOWTO_ACTION_TIMEOUT", ""))
-    except ValueError:
-        return DEFAULT_TIMEOUT
-    return seconds if seconds > 0 else DEFAULT_TIMEOUT
-
-
 def _placed(box: zoom.Box) -> str:
     return f"position:fixed;left:{box.x:g}px;top:{box.y:g}px;width:{box.width:g}px;height:{box.height:g}px"
 
@@ -344,6 +334,13 @@ class PlaywrightStage:
                 self.page.goto(action.value, timeout=self.timeout_ms * 3)
             elif action.kind == "press":
                 self.page.keyboard.press(action.value)
+            elif action.kind == "type":
+                # The same key names work on both stages. A name that both accepts is pressed;
+                # anything else is typed character by character, at the pace of the storyboard.
+                if action.value in KEY_NAMES:
+                    self.page.keyboard.press(action.value)
+                else:
+                    self.page.keyboard.type(action.value, delay=1000 / pace.typing)
             else:
                 target = self._one(action)
                 if action.kind in POINTER_ACTIONS:
