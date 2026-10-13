@@ -1,6 +1,7 @@
 """The helper itself, in a container, on the fixture app. These tests need Docker and the base image."""
 import subprocess
 import time
+import urllib.request
 
 import pytest
 
@@ -301,3 +302,67 @@ def test_a_mark_gets_the_box_of_a_labels_words_and_not_of_its_room(helper):
 
 def test_a_control_keeps_its_own_box_for_a_mark(helper):
     assert tight(helper, role="button", name="Add") == find(helper, role="button", name="Add")["box"]
+
+
+def test_show_serves_the_monitor_on_this_machine_only_with_a_password_of_the_run(desktop):
+    link = open_link(desktop.docker, desktop.image, publish=6080)
+    try:
+        link.request("start", limit=90, run=desktop.run, timeout=60, **SIZE)
+        shown = link.request("show", limit=60, view_only=True)
+        assert len(shown["password"]) == 8 and shown["port"] == 6080
+        assert link.request("show", limit=60, view_only=True)["password"] == shown["password"]
+        port = link.port(6080)
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/vnc.html", timeout=10) as page:
+            assert page.status == 200 and b"noVNC" in page.read()
+        published = subprocess.run([*desktop.docker, "port", link.name], capture_output=True, text=True).stdout
+        assert published.strip() == f"6080/tcp -> 127.0.0.1:{port}"
+    finally:
+        link.close()
+
+
+def test_a_container_without_a_window_publishes_nothing(helper, desktop):
+    assert subprocess.run([*desktop.docker, "port", helper.name], capture_output=True, text=True).stdout.strip() == ""
+
+
+@pytest.fixture
+def large(desktop):
+    """The helper on a monitor of twice the picture's size, as a storyboard that zooms gets it."""
+    link = open_link(desktop.docker, desktop.image)
+    try:
+        link.request("start", limit=90, run=desktop.run, timeout=60, scale=2, **SIZE)
+        yield link
+    finally:
+        link.close()
+
+
+def test_at_twice_the_scale_a_place_is_still_in_pixels_of_the_picture(large):
+    assert find(large, role="frame", name="Fixture")["box"] == [0, 0, 1280, 720]
+    x, y, width, height = find(large, role="button", name="Add")["box"]
+    assert x + width <= 1280 and y + height <= 720 and 20 < width < 200 and 10 < height < 80
+
+
+def test_at_twice_the_scale_a_click_lands_where_the_tree_says(large):
+    press(large, label="Name")
+    large.request("type", limit=10, text="sam", rate=0)
+    press(large, role="button", name="Add")
+    assert find(large, text="Added sam")["count"] == 1
+
+
+def test_at_twice_the_scale_the_screen_is_read_in_pixels_of_the_picture(large, tmp_path):
+    found = find(large, text="Painted words")
+    x, y, width, height = found["box"]
+    assert found["layer"] == "screen" and x + width <= 1280 and y + height <= 720 and width > 150
+    press(large, text="Painted words")
+    assert find(large, text="Pressed once")["layer"] == "screen"
+    picture = tmp_path / "screen.png"
+    large.fetch(large.request("screenshot", limit=30)["path"], picture)
+    data = picture.read_bytes()
+    assert (int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")) == (1280, 720)
+
+
+def test_at_twice_the_scale_the_recording_has_the_size_of_the_monitor(large, tmp_path):
+    large.request("record_start", limit=30)
+    time.sleep(1)
+    video = tmp_path / "take.mkv"
+    large.fetch(large.request("record_stop", limit=30)["path"], video)
+    assert dimensions(find_tool("ffprobe", "HOWTO_FFPROBE"), video) == (2560, 1440)

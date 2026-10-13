@@ -1,5 +1,5 @@
 """The helper's reading of the screen, with tesseract's table given as text."""
-from howto.desktop.helper.screen import Line, lacking, lines_of, share, spot
+from howto.desktop.helper.screen import Line, lacking, lines_of, share, spot, shot_command
 from howto.desktop.helper.tree import Node
 
 PICTURE = (1920, 1080)
@@ -148,3 +148,16 @@ def test_a_colour_that_differs_in_one_channel_only_is_something():
 
 def test_an_area_without_a_pixel_has_nothing_in_it():
     assert share([]) == 0.0
+
+
+def test_a_screenshot_of_a_monitor_of_the_picture_s_size_is_taken_as_it_is():
+    command = shot_command(1920, 1080, "/tmp/howto/screen.png")
+    assert "-vf" not in command and command[-3:] == ["-frames:v", "1", "/tmp/howto/screen.png"]
+    assert command[command.index("-video_size") + 1] == "1920x1080" and command[command.index("-draw_mouse") + 1] == "0"
+    assert shot_command(1920, 1080, "/x.png", (1920, 1080)) == shot_command(1920, 1080, "/x.png")
+
+
+def test_a_screenshot_of_a_larger_monitor_is_brought_to_the_size_of_the_picture():
+    command = shot_command(3840, 2160, "/tmp/howto/screen.png", (1920, 1080))
+    assert command[command.index("-video_size") + 1] == "3840x2160"
+    assert command[command.index("-vf") + 1] == "scale=1920:1080:flags=area"

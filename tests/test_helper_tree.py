@@ -1,6 +1,6 @@
 """The helper's parts that touch no bus: the names of roles, which element a locator names, and the outline."""
 from howto.desktop.helper.roles import web_role
-from howto.desktop.helper.tree import Node, match, names, nearest, outline, tighter
+from howto.desktop.helper.tree import Node, match, names, nearest, outline, tighter, learn, rescale, unit
 
 PICTURE = (1920, 1080)
 
@@ -199,3 +199,44 @@ def test_words_that_the_app_places_outside_the_element_are_not_believed():
 def test_no_words_and_words_without_a_size_leave_the_element_as_it_is():
     assert tighter(LABEL, None) == LABEL
     assert tighter(LABEL, (12, 303, 0, 18)) == LABEL
+
+
+def test_an_app_that_counts_in_its_own_pixels_has_a_unit_of_the_scale():
+    # GTK at twice the scale: the window is 3840 wide on the monitor, and the tree says 1920.
+    assert unit((1920, 1080), (3840, 2160), 2) == 2
+
+
+def test_an_app_that_counts_in_pixels_of_the_monitor_has_a_unit_of_one():
+    assert unit((3840, 2160), (3840, 2160), 2) == 1
+
+
+def test_a_frame_without_its_title_bar_is_still_the_same_window():
+    assert unit((600, 300), (1200, 656), 2) == 2
+
+
+def test_two_sizes_that_agree_in_neither_unit_are_not_one_window():
+    # A menu of 200 by 300 says nothing about a window that fills the monitor.
+    assert unit((200, 300), (3840, 2160), 2) is None
+    assert unit((0, 0), (3840, 2160), 2) is None
+
+
+def test_the_unit_of_an_app_is_learned_from_a_window_that_is_listed_whatever_comes_first():
+    menu = node("menu", box=(40, 30, 200, 300), pid=7)
+    frame = node("frame", "Fixture", box=(0, 0, 3840, 2160), pid=7)
+    other = node("frame", "Other", box=(0, 0, 1920, 1080), pid=9)
+    units = {}
+    learn(units, [menu, frame, other], [(7, 3840, 2160), (9, 3840, 2160)], 2)
+    assert units == {7: 1, 9: 2}
+
+
+def test_an_app_with_no_listed_window_teaches_nothing_and_a_known_one_is_kept():
+    units = {7: 1}
+    learn(units, [node("frame", "Fixture", box=(0, 0, 1920, 1080), pid=7), node("menu", box=(0, 0, 200, 300), pid=8)], [(7, 3840, 2160)], 2)
+    assert units == {7: 1}
+
+
+def test_rescaling_a_window_moves_everything_in_it():
+    frame = node("frame", box=(0, 0, 3840, 2160), children=[node("button", "Add", box=(200, 100, 160, 60)), node("label", box=None)])
+    rescale(frame, 0.5)
+    assert frame.box == (0, 0, 1920, 1080)
+    assert frame.children[0].box == (100, 50, 80, 30) and frame.children[1].box is None

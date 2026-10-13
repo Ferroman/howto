@@ -25,20 +25,30 @@ def _with(why: str, said: str) -> str:
 class Desk:
     def __init__(self) -> None:
         self.session: Session | None = None
+        # The size of the picture. Every request and every reply is in its pixels.
         self.picture = (0, 0)
+        # How many pixels of the monitor one pixel of the picture is, and the size of the monitor.
+        self.scale = 1
+        self.monitor = (0, 0)
+        # For each app, by its pid: how many pixels of the monitor one unit of its boxes is.
+        self._units: dict[int, int] = {}
         self.recorder = Recorder()
+        self.watch = Watch()
 
     def handlers(self) -> dict:
         return {name: getattr(self, name) for name in REQUESTS}
 
     def stop(self) -> None:
         self.recorder.abandon()
+        self.watch.stop()
         if self.session is not None:
             self.session.stop()
 
     def start(self, q: dict) -> dict:
+        self.scale = q.get("scale", 1)
         self.picture = (q["width"], q["height"])
-        self.session = Session(q["width"], q["height"])
+        self.monitor = (q["width"] * self.scale, q["height"] * self.scale)
+        self.session = Session(*self.monitor, self.scale)
         self.session.start()
         self.session.launch(q["run"])
         window = self.session.first_window(q["timeout"])
@@ -51,15 +61,28 @@ class Desk:
             raise Refusal("no_window", _with(why, self.session.said()))
         self.session.fill(window)
         # The pointer waits in a corner, off whatever the app shows first.
-        xinput.move(f"mousemove {q['width'] - 24} {q['height'] - 24}\n")
+        xinput.move(f"mousemove {self.monitor[0] - 24 * self.scale} {self.monitor[1] - 24 * self.scale}\n")
         return {"build": os.environ.get("HOWTO_BUILD", ""), "title": self.session.title()}
 
     def _to_picture(self, pid: int, box: tuple) -> tree.Box:
         """A box as an app reports it, in pixels of the picture."""
-        return tuple(float(value) for value in box)
+        factor = self._units.get(pid, self.scale) / self.scale
+        return tuple(float(value) * factor for value in box)
 
     def _windows(self, hidden: bool = False) -> list[tree.Node]:
-        return atspi.snapshot(self._to_picture, hidden)
+        # The tree is read as the apps report it. Then each window is brought to pixels of the picture.
+        windows = atspi.snapshot(lambda pid, box: tuple(float(value) for value in box), hidden)
+        if self.scale > 1:
+            listed = [(window.pid, window.width, window.height) for window in self.session.windows()]
+            tree.learn(self._units, windows, listed, self.scale)
+            for window in windows:
+                # An app of which no listed window told: most toolkits count in their own pixels.
+                tree.rescale(window, self._units.get(window.pid, self.scale) / self.scale)
+        return windows
+
+    def _shot(self) -> str:
+        """A screenshot of the monitor, at the size of the picture."""
+        return screen.shot(*self.monitor, picture=self.picture)
 
     def _gone(self) -> None:
         """Refuses when the app has ended: nothing more can be found in it."""
@@ -106,7 +129,7 @@ class Desk:
             found = tree.match(windows, locator, self.picture)
             lines, places = [], []
             if not found and "text" in locator:
-                lines = screen.read(screen.shot(*self.picture))
+                lines = screen.read(self._shot())
                 places = self._places(lines, locator, windows)
             if found or places or time.monotonic() >= end:
                 return found, places, windows, lines
@@ -150,7 +173,7 @@ class Desk:
         return {"count": 0, "tried": tried, "nearest": tree.nearest(wanted, heard) if wanted else []}
 
     def pointer(self, q: dict) -> dict:
-        target = (round(q["x"]), round(q["y"]))
+        target = (round(q["x"] * self.scale), round(q["y"] * self.scale))
         seconds = q.get("seconds", 0)
         xinput.move(pointer.script(pointer.path(xinput.position(), target, seconds), seconds))
         return {}
@@ -206,17 +229,17 @@ class Desk:
         return {"code": proc.returncode, "output": "\n".join(lines[-8:])}
 
     def record_start(self, q: dict) -> dict:
-        return {"first_frame": self.recorder.start(*self.picture)}
+        return {"first_frame": self.recorder.start(*self.monitor)}
 
     def record_stop(self, q: dict) -> dict:
         return {"path": self.recorder.stop()}
 
     def screenshot(self, q: dict) -> dict:
-        return {"path": screen.shot(*self.picture)}
+        return {"path": self._shot()}
 
     def words(self, q: dict) -> dict:
         """The lines of words on the screen. With `lacking`, only the words that the tree does not have."""
-        lines = screen.read(q.get("shot") or screen.shot(*self.picture))
+        lines = screen.read(q.get("shot") or self._shot())
         windows = self._windows()
         if q.get("lacking"):
             lines = screen.lacking(lines, windows, self.picture)
@@ -233,9 +256,13 @@ class Desk:
             ]
         return {"lines": [{"text": line.text, "box": list(line.box)} for line in lines]}
 
+    def show(self, q: dict) -> dict:
+        """Lets a person watch the monitor in a browser. Without `view_only` the person can also use it."""
+        return {"password": self.watch.start(bool(q.get("view_only"))), "port": WEB_PORT}
+
     def busy(self, q: dict) -> dict:
         """For each area of the picture, the part of it that is something. An arrow is drawn where little is."""
-        return {"shares": screen.busy(screen.shot(*self.picture), q["areas"])}
+        return {"shares": screen.busy(self._shot(), q["areas"])}
 
     def outline(self, q: dict) -> dict:
         windows = self._windows()

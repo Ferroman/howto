@@ -201,3 +201,45 @@ def tighter(box: Box, words: Box | None) -> Box:
         and words[0] + words[2] <= box[0] + box[2] + 1 and words[1] + words[3] <= box[1] + box[3] + 1
     )
     return words if inside else box
+
+
+def unit(frame: tuple[float, float], window: tuple[float, float], scale: int) -> int | None:
+    """How many pixels of the monitor one unit of an app's boxes is: 1, or the scale.
+
+    A toolkit that draws at twice its size counts either in pixels of the
+    monitor or in its own, which are twice as large. One window tells which:
+    `frame` is its size as the tree has it, and `window` its size on the
+    monitor. None when the two agree in neither unit, and so are not one
+    window. A tenth of slack is for a title bar.
+    """
+    if frame[0] <= 0 or frame[1] <= 0:
+        return None
+    for candidate in (scale, 1):
+        wide, tall = frame[0] * candidate, frame[1] * candidate
+        if abs(wide - window[0]) <= 0.1 * window[0] and abs(tall - window[1]) <= 0.1 * window[1]:
+            return candidate
+    return None
+
+
+def learn(units: dict[int, int], windows: list[Node], listed: list[tuple[int, float, float]], scale: int) -> None:
+    """Adds to `units` the unit of each app that one of its windows tells, by the app's pid.
+
+    `listed` is the pid, the width and the height of each window that the
+    window manager lists, in pixels of the monitor. A menu that hangs over a
+    window is not listed, and teaches nothing.
+    """
+    for window in windows:
+        if window.pid in units or window.box is None:
+            continue
+        for pid, wide, tall in listed:
+            found = unit(window.box[2:], (wide, tall), scale) if pid == window.pid else None
+            if found is not None:
+                units[window.pid] = found
+                break
+
+
+def rescale(node: Node, factor: float) -> None:
+    """Multiplies the boxes of a node, and of everything under it."""
+    for one in (node, *below(node)):
+        if one.box is not None:
+            one.box = tuple(value * factor for value in one.box)

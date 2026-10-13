@@ -5,6 +5,7 @@ Every program here is one of the image. Nothing is asked of the host.
 from __future__ import annotations
 
 import os
+import signal
 import subprocess
 import time
 from dataclasses import dataclass
@@ -20,6 +21,23 @@ A11Y_ENV = {
     "ACCESSIBILITY_ENABLED": "1",
     "GNOME_ACCESSIBILITY": "1",
 }
+
+
+def scale_env(scale: int) -> dict[str, str]:
+    """What makes each toolkit draw at `scale` times its size, as spike/desktop/scale.py measured it.
+
+    GTK and Qt each read two settings, their own and the resolution of the
+    display, and would enlarge twice. `GDK_DPI_SCALE` and `QT_FONT_DPI` undo
+    the second. `Xft.dpi`, which `Session.start` sets, serves Chromium,
+    Electron and most of the rest.
+    """
+    if scale == 1:
+        return {}
+    return {
+        "GDK_SCALE": str(scale), "GDK_DPI_SCALE": f"{1 / scale:g}",
+        "QT_SCALE_FACTOR": str(scale), "QT_FONT_DPI": "96",
+        "XCURSOR_SIZE": str(24 * scale),
+    }
 WINDOW_MANAGER = ["openbox", "--sm-disable"]
 # The kinds of window that are an app's own first window. A splash screen is not one.
 OWN_WINDOWS = ("_NET_WM_WINDOW_TYPE_NORMAL", "_NET_WM_WINDOW_TYPE_DIALOG")
@@ -71,8 +89,8 @@ def until(test, seconds: float) -> bool:
 
 
 class Session:
-    def __init__(self, width: int, height: int) -> None:
-        self.width, self.height = width, height
+    def __init__(self, width: int, height: int, scale: int = 1) -> None:
+        self.width, self.height, self.scale = width, height, scale
         self.env = dict(os.environ)
         self.first: Window | None = None
         self._started: list[subprocess.Popen] = []
@@ -92,12 +110,16 @@ class Session:
         os.makedirs(RUNTIME, mode=0o700, exist_ok=True)
         self.env.update(
             DISPLAY=DISPLAY, XDG_RUNTIME_DIR=RUNTIME, DBUS_SESSION_BUS_ADDRESS=f"unix:path={RUNTIME}/bus",
-            XCURSOR_THEME="Adwaita", **A11Y_ENV,
+            XCURSOR_THEME="Adwaita", **A11Y_ENV, **scale_env(self.scale),
         )
         # Whatever the helper itself runs or asks later must find the same monitor and the same bus.
         os.environ.update(self.env)
         self._spawn(["Xvfb", DISPLAY, "-screen", "0", f"{self.width}x{self.height}x24", "-nolisten", "tcp"])
         self._need(lambda: os.path.exists("/tmp/.X11-unix/X99"), "the monitor")
+        if self.scale > 1:
+            # Before the window manager and the app: each reads it once, when it starts.
+            # -nocpp: xrdb would hand the line to a C preprocessor, which the image does not have.
+            quiet("xrdb", "-nocpp", "-merge", input=f"Xft.dpi: {96 * self.scale}\n")
         self._spawn(["dbus-daemon", "--session", f"--address=unix:path={RUNTIME}/bus", "--nofork"])
         self._need(lambda: os.path.exists(f"{RUNTIME}/bus"), "the session bus")
         self._spawn(["/usr/libexec/at-spi-bus-launcher", "--launch-immediately"])
@@ -172,6 +194,20 @@ class Session:
         return next((window.title for window in self.windows() if window.id == self.first.id), "")
 
     def stop(self) -> None:
-        for process in [self._app, *reversed(self._started)]:
-            if process is not None and process.poll() is None:
+        """Ends the app, and then the monitor and the buses under it.
+
+        The app comes first and gets a moment, because it writes down what it
+        holds when it is told to end, and a profile keeps what it wrote. Its
+        whole group is told: the line of shell that started it may still be
+        its parent.
+        """
+        app = self._app
+        if app is not None and app.poll() is None:
+            try:
+                os.killpg(app.pid, signal.SIGTERM)
+                app.wait(timeout=5)
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+        for process in reversed(self._started):
+            if process.poll() is None:
                 process.terminate()

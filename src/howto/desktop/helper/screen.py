@@ -130,13 +130,25 @@ def lacking(lines: list[Line], windows: list[Node], picture: tuple[int, int]) ->
     return kept
 
 
-def shot(width: int, height: int, out: str = SHOT) -> str:
-    """Writes a PNG of the monitor, without the pointer, and returns its path."""
-    proc = subprocess.run(
-        ["ffmpeg", "-loglevel", "error", "-y", "-f", "x11grab", "-draw_mouse", "0",
-         "-video_size", f"{width}x{height}", "-i", DISPLAY, "-frames:v", "1", out],
-        capture_output=True, text=True, errors="replace",
-    )
+def shot_command(width: int, height: int, out: str, picture: tuple[int, int] | None = None) -> list[str]:
+    """The ffmpeg that writes a PNG of a monitor of this size, without the pointer."""
+    command = [
+        "ffmpeg", "-loglevel", "error", "-y", "-f", "x11grab", "-draw_mouse", "0",
+        "-video_size", f"{width}x{height}", "-i", DISPLAY,
+    ]
+    if picture is not None and tuple(picture) != (width, height):
+        command += ["-vf", f"scale={picture[0]}:{picture[1]}:flags=area"]
+    return [*command, "-frames:v", "1", out]
+
+
+def shot(width: int, height: int, out: str = SHOT, picture: tuple[int, int] | None = None) -> str:
+    """Writes a PNG of the monitor and returns its path.
+
+    `width` and `height` are the monitor's. With `picture`, the screenshot is
+    brought to that size, so that a place on it is a place of the picture:
+    whatever reads it or looks at it needs no other arithmetic.
+    """
+    proc = subprocess.run(shot_command(width, height, out, picture), capture_output=True, text=True, errors="replace")
     if proc.returncode != 0:
         raise RuntimeError(f"cannot take a screenshot: {proc.stderr.strip()[-300:]}")
     return out

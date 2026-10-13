@@ -1,5 +1,5 @@
 """The one part of the helper's desktop that needs no monitor: reading the window manager's list."""
-from howto.desktop.helper.session import Window, parse_windows
+from howto.desktop.helper.session import scale_env, Window, parse_windows
 
 LISTING = (
     "0x01200003  0 4242   0    0    1920 1080 a1b2c3d4e5f6 logo.svg - Inkscape\n"
@@ -19,3 +19,13 @@ def test_each_line_of_the_list_is_a_window():
 
 def test_no_window_gives_an_empty_list():
     assert parse_windows("") == []
+
+
+def test_twice_the_scale_is_asked_of_each_toolkit_in_its_own_way():
+    assert scale_env(2) == {
+        "GDK_SCALE": "2", "GDK_DPI_SCALE": "0.5", "QT_SCALE_FACTOR": "2", "QT_FONT_DPI": "96", "XCURSOR_SIZE": "48",
+    }
+
+
+def test_the_picture_s_own_scale_asks_for_nothing():
+    assert scale_env(1) == {}
