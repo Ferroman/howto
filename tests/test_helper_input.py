@@ -3,6 +3,7 @@ import pytest
 
 from howto.desktop.helper.keys import BadKey, chord
 from howto.desktop.helper.pointer import path, script
+from howto.desktop.helper.xinput import typing_plan
 
 
 @pytest.mark.parametrize(
@@ -42,6 +43,20 @@ def test_a_letter_with_control_is_not_typed_as_a_capital():
 def test_what_is_not_a_key_is_refused_with_its_name(written):
     with pytest.raises(BadKey):
         chord(written)
+
+
+@pytest.mark.parametrize(
+    "written, expected",
+    [
+        ("sam", [("type", "sam")]),
+        ("sam é", [("type", "sam "), ("key", "U00E9")]),
+        ("é", [("key", "U00E9")]),
+        ("aéb", [("type", "a"), ("key", "U00E9"), ("type", "b")]),
+    ],
+)
+def test_text_is_split_into_what_is_typed_and_what_is_pressed(written, expected):
+    # `xdotool type` skips a character the monitor's keyboard has no key for, so it is pressed by its name.
+    assert typing_plan(written) == expected
 
 
 def test_the_message_of_a_wrong_key_offers_the_names():

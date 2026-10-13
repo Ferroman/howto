@@ -160,7 +160,7 @@ steps:
 | `fill` | Clicks the element, selects what is in it with Control+A, and types the value |
 | `select` | Clicks the control, then clicks the element of the tree whose name is the option. It needs the tree. For a list that only the screen shows, the author writes two clicks |
 | `press` | A key or a chord, with the names a web storyboard uses: `Enter`, `Control+S`, `ArrowDown`. The helper maps them to the names of X |
-| `type` | New. Types text to whatever has the keyboard, at `pace.typing`. It serves a canvas, a terminal and a field where Control+A does not select. It also works on a web page |
+| `type` | New. Types text to whatever has the keyboard, at `pace.typing`. It serves a canvas, a terminal and a field where Control+A does not select. It also works on a web page. A character that the monitor's keyboard has no key for is pressed by its Unicode keysym name, so an accented letter reaches the app |
 | `scroll_to` | Asks the app to bring an element of the tree into view. An app that cannot do it fails the step, with a message that offers `press: PageDown` |
 | `wait_for` | Waits until the locator finds its element |
 | `run` | New. Runs a shell command in the container and waits for it, for three times the action's time limit at most. A command that ends with another code than 0, or does not end in time, fails the step. For `setup` and `cleanup` most of all: to copy a document in, and to remove what the steps made. A longer job belongs in the image |

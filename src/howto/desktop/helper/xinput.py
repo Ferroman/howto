@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import subprocess
 
+from .keys import chord
+
 
 def _xdotool(*arguments: str, text: str | None = None) -> str:
     proc = subprocess.run(["xdotool", *arguments], input=text, capture_output=True, text=True, errors="replace")
@@ -69,9 +71,34 @@ def press(hold: float) -> None:
         _xdotool("click", "1")
 
 
+def typing_plan(text: str) -> list[tuple[str, str]]:
+    """The text as runs to type and single characters to press.
+
+    `xdotool type` skips a character that the monitor's keyboard has no key for, so a character
+    outside plain ASCII is pressed by its keysym name, the name `chord` gives a key.
+    """
+    plan: list[tuple[str, str]] = []
+    run = ""
+    for char in text:
+        if ord(char) < 128:
+            run += char
+            continue
+        if run:
+            plan.append(("type", run))
+            run = ""
+        plan.append(("key", chord(char)))
+    if run:
+        plan.append(("type", run))
+    return plan
+
+
 def type_text(text: str, delay_ms: int) -> None:
     """Types text to whatever has the keyboard. The text goes in through stdin, so it may hold anything."""
-    _xdotool("type", "--clearmodifiers", "--delay", str(delay_ms), "--file", "-", text=text)
+    for kind, value in typing_plan(text):
+        if kind == "type":
+            _xdotool("type", "--clearmodifiers", "--delay", str(delay_ms), "--file", "-", text=value)
+        else:
+            _xdotool("key", "--clearmodifiers", value)
 
 
 def key(names: str) -> None:
