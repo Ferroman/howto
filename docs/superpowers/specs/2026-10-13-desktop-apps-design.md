@@ -1,6 +1,6 @@
 # Desktop apps: design
 
-> **Status: a design. Nothing in this document is built.** The [measurements](#measurements-to-make-first) come first, and a measurement that fails changes this document before any other work starts.
+> **Status: built.** This document is the design as it was approved, with the changes that the [measurements](#measurements-to-make-first) made. [docs/internals.md](../../internals.md#desktop-apps) describes what the code does now.
 
 ## Goal
 
@@ -211,7 +211,7 @@ So the monitor shows the app only. After the take, `overlay.py` draws the layer 
 
 - **The HTML and the SVG are the ones the browser stage uses**, from `marks.py` and from the note's style, so a mark looks the same in both kinds of video.
 - **The layer is a list of PNG pictures with transparency**, each with the time it is shown. A picture is made only when the layer changes, which is how `animation.py` keeps the frames of a GIF.
-- **A mark that draws itself is stepped frame by frame.** `overlay.py` stops the page's animations and sets their time for each frame, so the frames do not depend on how fast the machine is.
+- **A mark, a ring and a title card appear at once.** Measured: Chromium drew the 321 pictures of a 60 s take in 13.1 s, over the 10 s mark, so the layer is one picture for each moment at which something changes and nothing is stepped frame by frame. `overlay.py` can still stop the page's animations and set their time for each frame, so that the frames do not depend on how fast the machine is, and it does so for whatever animates.
 - **ffmpeg lays the layer on the recording** in the same command that makes the zoom.
 - **The chapter card is `howto`'s own.** The browser's recorder draws the card of a web video, and nothing can call it here. The card of a desktop video is drawn to match it.
 - **Each click shows a ring** that spreads from the pointer, because the real pointer shows no click.
