@@ -11,6 +11,7 @@ NAMES = {
     "Delete": "Delete",
     "Insert": "Insert",
     "Space": "space",
+    "space": "space",
     " ": "space",
     "ArrowUp": "Up",
     "ArrowDown": "Down",

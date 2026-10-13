@@ -95,6 +95,13 @@ def test_a_press_and_a_type_go_to_the_keyboard():
     assert link.asked == [("key", {"keys": "Control+S"}), ("type", {"text": "héllo", "rate": 0})]
 
 
+def test_typing_gets_time_for_the_whole_text():
+    """xdotool types the word at once, so the request must allow the whole typing, not the time for one key."""
+    desk, link = stage(("type", {}))
+    desk.perform(action({"type": "a" * 200}), Pace())
+    assert link.limits[-1] > 15.0
+
+
 def test_a_place_is_pointed_at_without_asking_where_it_is():
     desk, link = stage(("pointer", {}), ("click", {}), ("pointer", {}))
     desk.perform(action({"click": {"at": "960x540"}}), Pace())

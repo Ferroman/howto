@@ -4,8 +4,6 @@ import sys
 import pytest
 
 from howto.errors import HowtoError, RunError, StoryboardError
-from pathlib import Path
-
 from howto.tools import KEY_NAMES, action_timeout, find_tool, run, run_tool
 
 
@@ -108,19 +106,11 @@ def test_run_tool_refuses_a_program_that_is_not_there():
 
 
 def test_key_names_are_the_same_on_both_sides():
-    """The helper keeps its own list because it imports nothing of howto. The two must agree."""
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "spike" / "desktop"))
-    import box
+    """The helper keeps its own list because it imports nothing of howto. Every name here works there."""
+    from howto.desktop.helper.keys import BadKey, chord
 
-    assert set(box.KEY_NAMES) == set(KEY_NAMES)
-
-
-def test_type_waits_for_the_typing_delay():
-    """The web stage types one character per delay and xdotool types the word at once, so the request
-    must allow the whole typing, not just the time for one key."""
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "spike" / "desktop"))
-    import box
-
-    pace = {"typing": 0.4}
-    assert box.type_delay(pace) == 0.4
-    assert box.type_timeout(pace, "hello") >= action_timeout() + 5 * 0.4
+    for name in KEY_NAMES:
+        try:
+            chord(name)
+        except BadKey as exc:
+            pytest.fail(f"the helper does not accept `{name}`: {exc}")
