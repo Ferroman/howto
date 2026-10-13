@@ -1,19 +1,26 @@
-title: Replace a word in the document
+title: Replace colour with color in gedit
 app:
   image: howto-gedit
   run: gedit /home/howto/notes.txt
 viewport: 1280x720
+setup:
+  - wait_for: {role: textbox}
 steps:
-  - do:
-      - wait_for: {text: Notes for the next release}
-  - do:
-      - press: Control+h
-  - do:
+  - say: Open the Replace dialog with Control+H.
+    do:
+      - press: Control+H
+  - say: Type the word "colour" into the Find field.
+    do:
       - fill: {label: Find, value: colour}
-  - do:
-      - fill: {label: Replace with, value: accent colour}
-  - do:
-      - click: {role: button, name: Replace All}
-  - do:
+  - say: Type the word "color" into the Replace with field.
+    do:
+      - fill: {label: "Replace with", value: color}
+  - say: Click Replace All to replace every occurrence.
+    do:
+      - click: {role: button, name: "Replace All"}
+  - say: Close the Replace dialog.
+    do:
       - press: Escape
-      - wait_for: {text: accent colour of the theme}
+  - say: Save the file with Control+S.
+    do:
+      - press: Control+S
