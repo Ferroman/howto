@@ -1,10 +1,13 @@
 """Shared fixtures: a sandbox for howto's state, and fake tts, ffmpeg, ffprobe and img2webp programs."""
 from __future__ import annotations
 
+import io
 import json
 import os
 import stat
+import subprocess
 import sys
+import tarfile
 import textwrap
 from pathlib import Path
 from types import SimpleNamespace
@@ -109,6 +112,69 @@ FAKE_IMG2WEBP = '''
         handle.write(b"fake webp")
 '''
 
+FAKE_DOCKER = '''
+    """Stands in for docker: logs each call, and plays the helper for `run`.
+
+    build: reads the tar on stdin and writes down the names in it. Fails when FAKE_DOCKER_FAIL=build.
+    image inspect: fails for an image named in FAKE_DOCKER_MISSING. Otherwise prints the labels,
+        with FAKE_DOCKER_BUILD as the build of howto when it is set.
+    run: answers requests as a helper would. `refuse` is refused, `noise` writes a line that is
+        no reply first, `hang` never answers, `die` ends with a message, and anything else gets
+        its fields back.
+    cp: writes a tar with one file, whose content is FAKE_DOCKER_FILE.
+    Every call fails when FAKE_DOCKER_DOWN is set, as with a daemon that is not running.
+    """
+    import io, json, os, sys, tarfile, time
+
+    args = sys.argv[1:]
+    log = os.environ["FAKE_DOCKER_LOG"]
+    with open(log, "a", encoding="utf-8") as handle:
+        handle.write(json.dumps(args) + "\\n")
+    if os.environ.get("FAKE_DOCKER_DOWN"):
+        sys.stderr.write("Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?\\n")
+        sys.exit(1)
+    command = args[0]
+    if command == "build":
+        with tarfile.open(fileobj=io.BytesIO(sys.stdin.buffer.read())) as tar:
+            names = sorted(tar.getnames())
+        with open(log + ".context", "w", encoding="utf-8") as handle:
+            json.dump(names, handle)
+        sys.exit(1 if os.environ.get("FAKE_DOCKER_FAIL") == "build" else 0)
+    if command == "image":
+        image = args[-1]
+        if image in os.environ.get("FAKE_DOCKER_MISSING", "").split():
+            sys.stderr.write(f"Error response from daemon: No such image: {image}\\n")
+            sys.exit(1)
+        build = os.environ.get("FAKE_DOCKER_BUILD")
+        print(json.dumps({"howto.build": build} if build else None))
+        sys.exit(0)
+    if command == "cp":
+        data = os.environ.get("FAKE_DOCKER_FILE", "the file").encode()
+        with tarfile.open(fileobj=sys.stdout.buffer, mode="w|") as tar:
+            info = tarfile.TarInfo("fetched")
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+        sys.exit(0)
+    if command == "run":
+        for line in sys.stdin:
+            request = json.loads(line)
+            name = request["request"]
+            if name == "hang":
+                time.sleep(60)
+            if name == "die":
+                sys.stderr.write("the helper fell over\\n")
+                sys.exit(3)
+            if name == "noise":
+                print("a line that is no reply", flush=True)
+            if name == "refuse":
+                reply = {"id": request["id"], "ok": False, "kind": "covered", "error": "another window covers it"}
+            else:
+                fields = {key: value for key, value in request.items() if key not in ("id", "request")}
+                reply = {"id": request["id"], "ok": True, "fields": fields}
+            print(json.dumps(reply), flush=True)
+'''
+
+
 
 def _script(path: Path, body: str) -> Path:
     path.write_text(f"#!{sys.executable}\n{textwrap.dedent(body).lstrip()}", encoding="utf-8")
@@ -169,6 +235,25 @@ def fakes(tmp_path, monkeypatch, sandbox, fake_tts):
 SITE = Path(__file__).parent / "fixtures" / "site"
 SITE_REQUESTS: list[str] = []
 
+
+@pytest.fixture
+def fake_docker(tmp_path, monkeypatch):
+    """A fake `docker` on HOWTO_DOCKER. `calls()` lists the arguments of every call."""
+    program = _script(tmp_path / "fake-docker", FAKE_DOCKER)
+    log = tmp_path / "docker.log"
+    monkeypatch.setenv("HOWTO_DOCKER", str(program))
+    monkeypatch.setenv("FAKE_DOCKER_LOG", str(log))
+    for name in ("FAKE_DOCKER_DOWN", "FAKE_DOCKER_FAIL", "FAKE_DOCKER_MISSING", "FAKE_DOCKER_BUILD", "FAKE_DOCKER_FILE"):
+        monkeypatch.delenv(name, raising=False)
+
+    def calls() -> list[list[str]]:
+        return [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()] if log.exists() else []
+
+    def context() -> list[str]:
+        """The names in the tar that the last build was given."""
+        return json.loads(Path(f"{log}.context").read_text(encoding="utf-8"))
+
+    return SimpleNamespace(program=str(program), calls=calls, context=context)
 
 @pytest.fixture(scope="session")
 def site_url():

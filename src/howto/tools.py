@@ -8,6 +8,7 @@ first. On a machine without Homebrew this changes nothing.
 from __future__ import annotations
 
 import os
+import shlex
 import shutil
 import subprocess
 from pathlib import Path
@@ -66,6 +67,17 @@ def find_tool(name: str, env_var: str, *, brew_bin: Path = LINUXBREW_BIN) -> str
         return found
     raise RunError(f"{name} not found: set {env_var} or install {name}")
 
+
+def docker_command() -> list[str]:
+    """The Docker command as HOWTO_DOCKER gives it: one program, or a program with words in front, as in `sudo docker`."""
+    written = os.environ.get("HOWTO_DOCKER") or "docker"
+    try:
+        words = shlex.split(written)
+    except ValueError as exc:
+        raise RunError(f"HOWTO_DOCKER: {exc}") from None
+    if not words or shutil.which(words[0]) is None:
+        raise RunError(f"{words[0] if words else 'docker'} not found: install Docker, or set HOWTO_DOCKER")
+    return words
 
 def run(cmd: list[str], what: str, *, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
     try:

@@ -20,7 +20,7 @@ from .probe import format_report
 from .runner import Interrupt, RealClock, RunResult, run_probe, run_take
 from .storyboard import PROFILE_RE, Storyboard, load, parse_locator, read_yaml
 from .timeline import narration_only
-from .tools import find_tool
+from .tools import docker_command, find_tool
 
 
 def data_dir() -> Path:
@@ -299,6 +299,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_login.add_argument("profile")
     p_login.add_argument("url")
     p_login.set_defaults(func=cmd_login)
+    p_image = commands.add_parser("image", help="build the base image that the app of a desktop storyboard runs in")
+    p_image.set_defaults(func=cmd_image)
 
     p_probe = commands.add_parser("probe", help="run the steps without recording and describe the page")
     p_probe.add_argument("storyboard")
@@ -338,6 +340,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_voice.set_defaults(func=cmd_voice)
     return parser
 
+
+def cmd_image(args: argparse.Namespace) -> int:
+    from .desktop import images
+
+    for tag in images.build(docker_command()):
+        print(tag)
+    return 0
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
