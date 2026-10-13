@@ -2,6 +2,19 @@
 
 > **Status: built.** This document is the design as it was approved, with the changes that the [measurements](#measurements-to-make-first) made. [docs/internals.md](../../internals.md#desktop-apps) describes what the code does now.
 
+## What the measurements changed
+
+The numbers are in [spike/desktop/README.md](../../spike/desktop/README.md). Three claims of this document changed.
+
+1. **A zoom built from a 4K recording is not reliable on every machine.** The measured 4K recording lost 1.45 % and 1.69 % of its frames against a mark of 1 %, and its first frames were 200-240 ms late against a mark of 0.1 s. The code still records the monitor at twice the size, and the plan's warning that a small machine can fail to hold 25 frames a second is now a measured fact rather than a guess.
+2. **The screen reading is not trusted as a locator.** Tesseract read 4.3 % of the words at best against a mark of 90 %, so a `{text: ...}` locator that the tree does not have names only a large plain piece of text. The probe report prints the words it did read, and a step that needs a word the screen did not give still fails.
+3. **Marks keep their animation, but a long take costs more than the mark.** The pictures show a mark drawing itself and a ring spreading, so the animation stays. Chromium drew the 321 pictures of a 60 s take in 13.0 s against a mark of 10 s.
+
+Two more claims changed as the numbers came in:
+
+- **A mark is drawn from the tree only for a toolkit whose boxes are in monitor coordinates.** GTK 3 passes; GTK 4 names plenty of controls but every box starts at the window origin, so a mark on a GTK 4 app lands in the top-left corner. Qt publishes no tree at all.
+- **A title bar does not grow with the scale.** openbox gave 22 px and metacity 37 px at both scale 1 and scale 2, so a picture of a scaled app mixes one height of decoration with doubled content. openbox was chosen for the window manager.
+
 ## Goal
 
 `howto` films a Linux desktop app as it films a web app: from a storyboard, with `howto probe`, `howto render` and `howto animate`, and with the same narration.
