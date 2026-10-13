@@ -4,8 +4,10 @@ import wave
 
 import pytest
 
-from howto.assemble import assemble, mux_command, narration_track, srt, video_duration, vtt
+from howto.assemble import assemble, desktop_command, length_of, mux_command, narration_track, srt, video_duration, vtt
 from howto.errors import RunError
+from howto.desktop.picture import Layer
+from howto.desktop.takelog import TakeLog
 from howto.timeline import ClipTime, StepTime
 
 
@@ -157,3 +159,75 @@ def test_a_failed_assembly_keeps_the_earlier_outputs(fakes, monkeypatch, tmp_pat
     assert (out / "demo.mp4").read_bytes() == b"earlier video"
     assert (out / "demo.srt").read_text() == "earlier subtitles"
     assert sorted(p.name for p in out.iterdir()) == ["demo.mp4", "demo.srt"]
+
+
+def test_a_take_ends_with_its_last_step_or_its_last_clip(tmp_path):
+    steps = two_steps(tmp_path)
+    assert length_of(steps) == 3.0
+    late = (StepTime(1, 0.0, 2.0, (ClipTime("Late.", "late.wav", 1.5, 2.5),)),)
+    assert length_of(late) == 2.5
+    assert length_of((), fallback=7.0) == 7.0
+
+
+def test_the_command_of_a_desktop_take_leaves_the_head_out_and_lays_the_overlay_on(tmp_path):
+    command = desktop_command(
+        "ffmpeg", tmp_path / "capture.mkv", tmp_path / "narration.wav", "Add a name", tmp_path / "out.part", 12.5,
+        head=0.84, graph="[0:v]fps=25[base];[base][1:v]overlay=0:0:eof_action=repeat[v]", overlay="frames.txt",
+    )
+    joined = " ".join(command)
+    # The head is left out before the recording is read, so the picture starts where the take does.
+    assert joined.index("-ss 0.840") < joined.index(f"-i {tmp_path / 'capture.mkv'}")
+    assert "-f concat -safe 0 -i frames.txt" in joined
+    assert command.count("-i") == 3
+    assert "-map [v] -map 2:a:0" in joined
+    for piece in ("-c:v libx264", "-crf 18", "-pix_fmt yuv420p", "-r 25", "-c:a aac", "-f mp4", "-t 12.500"):
+        assert piece in joined
+    assert command[-1] == str(tmp_path / "out.part")
+
+
+def test_a_desktop_take_that_shows_nothing_has_two_inputs(tmp_path):
+    command = desktop_command(
+        "ffmpeg", tmp_path / "capture.mkv", tmp_path / "narration.wav", "Add a name", tmp_path / "out.part", 5.0,
+        head=0.0, graph="[0:v]fps=25[v]", overlay=None,
+    )
+    joined = " ".join(command)
+    assert command.count("-i") == 2 and "concat" not in joined
+    assert "-map [v] -map 1:a:0" in joined and "-ss 0.000" in joined
+
+
+def run_desktop_assemble(fakes, tmp_path, monkeypatch, work_name="work", frames=True):
+    """Assembles a desktop take with the fake ffmpeg, and returns the line with which the fake was called."""
+    work = tmp_path / work_name
+    (work / "overlay").mkdir(parents=True)
+    video = work / "capture.mkv"
+    video.write_bytes(b"fake mkv")
+    listing = work / "overlay" / "frames.txt"
+    listing.write_text("ffconcat version 1.0\n")
+    log = tmp_path / "ffmpeg.log"
+    monkeypatch.setenv("FAKE_FFMPEG_LOG", str(log))
+    outputs = assemble(
+        video=video, steps=two_steps(tmp_path), title="Add a name", name="add", out_dir=tmp_path / "out", work=work,
+        ffmpeg=fakes.ffmpeg, ffprobe=fakes.ffprobe,
+        layer=Layer(TakeLog(viewport=(1280, 720), head=0.84), listing if frames else None),
+    )
+    return outputs, log.read_text().splitlines()[-1]
+
+
+def test_assemble_lays_the_overlay_of_a_desktop_take_on_its_recording(fakes, monkeypatch, tmp_path):
+    outputs, called = run_desktop_assemble(fakes, tmp_path, monkeypatch)
+    assert outputs["mp4"].read_bytes() == b"fake mp4"
+    assert "-ss 0.840" in called and "overlay=0:0:eof_action=repeat" in called
+    assert outputs["srt"].read_text().count(" --> ") == 2
+
+
+def test_the_list_of_pictures_is_named_without_its_folder(fakes, monkeypatch, tmp_path):
+    # ffmpeg reads a % in the path of a picture as the place of a number.
+    outputs, called = run_desktop_assemble(fakes, tmp_path, monkeypatch, work_name="50%-off")
+    assert "-i frames.txt " in called
+    assert outputs["mp4"].exists()
+
+
+def test_a_desktop_take_that_shows_nothing_is_assembled_without_a_layer(fakes, monkeypatch, tmp_path):
+    outputs, called = run_desktop_assemble(fakes, tmp_path, monkeypatch, frames=False)
+    assert "[0:v]fps=25[v]" in called and "concat" not in called
+    assert outputs["mp4"].exists()

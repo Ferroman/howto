@@ -50,7 +50,7 @@ FAKE_FFMPEG = '''
     """Stands in for ffmpeg in the four ways howto calls it.
 
     One input: a clip conversion. Writes silence of the same length at 48 kHz, mono, 16-bit.
-    Two inputs: the assembly. Writes a marker file, or fails when FAKE_FFMPEG_FAIL=mux.
+    Two inputs or more: the assembly. Writes a marker file, or fails when FAKE_FFMPEG_FAIL=mux.
     With -frame_pts: the frames of an animated picture. Writes three files into
     the current directory, numbered 0, 5 and 6, or fails when FAKE_FFMPEG_FAIL=frames.
     With -final_delay: the GIF. Writes a marker file, or fails when FAKE_FFMPEG_FAIL=gif.
@@ -73,7 +73,7 @@ FAKE_FFMPEG = '''
                 with open(name, "wb") as handle:
                     handle.write(f"fake {kind}".encode())
             sys.exit(0)
-    if len(inputs) == 2:
+    if len(inputs) >= 2:
         if os.environ.get("FAKE_FFMPEG_FAIL") == "mux":
             sys.stderr.write("fake-ffmpeg: told to fail the assembly\\n")
             sys.exit(1)
@@ -300,3 +300,34 @@ def chromium():
         if os.environ.get("HOWTO_REQUIRE_BROWSER"):
             pytest.fail(reason)
         pytest.skip(reason)
+
+FIXTURE_IMAGE = "howto-test-fixture"
+
+
+@pytest.fixture(scope="session")
+def desktop():
+    """Skips a desktop test on a machine without Docker or without the base image of this build.
+
+    A skipped desktop test is not a pass. Where the desktop tests have to
+    run, HOWTO_REQUIRE_DESKTOP=1 turns the skip into a failure. The image of
+    the fixture app is built here, from tests/fixtures/desktop.
+    """
+    from howto.desktop import images
+    from howto.errors import RunError
+    from howto.tools import docker_command
+
+    try:
+        docker = docker_command()
+        images.check(docker, images.BASE)
+    except RunError as exc:
+        if os.environ.get("HOWTO_REQUIRE_DESKTOP"):
+            pytest.fail(str(exc))
+        pytest.skip(str(exc))
+    # The build goes in as a tar on stdin, as the base image's does.
+    data = io.BytesIO()
+    with tarfile.open(fileobj=data, mode="w") as tar:
+        for path in sorted((Path(__file__).parent / "fixtures" / "desktop").iterdir()):
+            tar.add(path, arcname=path.name)
+    built = subprocess.run([*docker, "build", "-q", "-t", FIXTURE_IMAGE, "-"], input=data.getvalue(), capture_output=True)
+    assert built.returncode == 0, built.stderr.decode("utf-8", "replace")[-2000:]
+    return SimpleNamespace(docker=docker, image=FIXTURE_IMAGE, run="python3 /opt/fixture/app.py")
