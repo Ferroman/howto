@@ -345,3 +345,117 @@ def test_a_storyboard_names_its_voice():
 
 def test_a_storyboard_without_a_voice_has_none():
     assert parse(board(), Path("x.yaml")).voice is None
+
+
+DESKTOP = """
+title: Add a name
+app:
+  image: howto-fixture
+  run: python3 /opt/fixture/app.py
+steps:
+  - say: Type a name and press Add.
+    do:
+      - fill: {label: Name, value: sam}
+      - click: {role: button, name: Add}
+      - click: {at: 960x540}
+      - type: hello
+cleanup:
+  - run: rm -f /home/howto/notes.txt
+"""
+
+
+def desk(**changes):
+    data = yaml.safe_load(DESKTOP)
+    data.update(changes)
+    return data
+
+
+def desk_step(*actions):
+    return desk(steps=[{"do": list(actions)}])
+
+
+def test_a_desktop_storyboard_names_its_app():
+    sb = parse(desk(), Path("videos/add.yaml"))
+    assert (sb.app.image, sb.app.run) == ("howto-fixture", "python3 /opt/fixture/app.py")
+    assert sb.url is None and sb.desktop
+    assert sb.origin == "videos/add.yaml"
+
+
+def test_a_web_storyboard_has_no_app():
+    sb = parse(board(), Path("demo.yaml"))
+    assert sb.app is None and not sb.desktop
+    assert sb.origin == "https://app.example.com"
+
+
+def test_a_place_is_a_point_and_with_a_size_an_area():
+    do = [{"click": {"at": "960x540"}}, {"box": {"at": "900x500", "size": "120x40"}}]
+    click, box = parse(desk_step(*do), Path("x.yaml")).steps[0].do
+    assert (click.locator.at, click.locator.size, click.locator.area) == ((960, 540), None, False)
+    assert (box.locator.at, box.locator.size, box.locator.area) == ((900, 500), (120, 40), True)
+    assert click.describe() == "click at=960x540"
+    assert box.describe() == "box at=900x500 size=120x40"
+
+
+def test_a_locator_of_the_tree_gives_an_area():
+    assert parse_locator({"role": "button", "name": "Add"}, "here").area
+
+
+def test_type_and_run_take_text():
+    sb = parse(desk(), Path("x.yaml"))
+    assert sb.steps[0].do[3].describe() == "type hello"
+    assert sb.cleanup[0].describe() == "run rm -f /home/howto/notes.txt"
+
+
+def test_type_also_goes_in_a_web_storyboard():
+    sb = parse(one_step({"do": [{"type": "hello"}]}), Path("x.yaml"))
+    assert sb.steps[0].do[0].describe() == "type hello"
+
+
+def test_a_storyboard_says_whether_it_zooms():
+    assert not parse(desk(), Path("x.yaml")).zooms
+    assert parse(desk(zoom="2"), Path("x.yaml")).zooms
+    assert parse(desk(steps=[{"say": "Hi.", "zoom": 2}]), Path("x.yaml")).zooms
+    assert not parse(desk(zoom="1", steps=[{"say": "Hi.", "zoom": 1}]), Path("x.yaml")).zooms
+
+
+@pytest.mark.parametrize(
+    "data, fragment",
+    [
+        (desk(url="http://demo.test"), "`url` and `app` do not go together"),
+        ({"title": "T", "steps": [{"say": "Hi."}]}, "missing field `url`, for a web page, or `app`, for a desktop app"),
+        (desk(app="inkscape"), "`app` must be a mapping with `image` and `run`"),
+        (desk(app={"image": "howto-fixture"}), "`app`: missing field `run`"),
+        (desk(app={"run": "gedit"}), "`app`: missing field `image`"),
+        (desk(app={"image": "howto-fixture", "run": "gedit", "user": "root"}), "`app`: unknown field `user`"),
+        (desk(app={"image": "--privileged", "run": "gedit"}), "`app`: `image`: use the name of a Docker image"),
+        (desk(app={"image": "howto fixture", "run": "gedit"}), "`app`: `image`: use the name of a Docker image"),
+        (desk(app={"image": "Howto-Fixture", "run": "gedit"}), "`app`: `image`: use the name of a Docker image"),
+        (desk(app={"image": "howto-fixture", "run": " "}), "`app`: `run`: must be non-empty text"),
+        (desk_step({"click": {"css": "button"}}),
+         "step 1: `do[1]`: `click`: `css` is for a web page. A desktop storyboard can use role, label, text, at"),
+        (desk_step({"click": {"placeholder": "Name"}}), "`placeholder` is for a web page"),
+        (desk_step({"click": {"testid": "add"}}), "`testid` is for a web page"),
+        (desk_step({"click": {"role": "button", "within": {"css": "form"}}}),
+         "step 1: `do[1]`: `click`: `within`: `css` is for a web page"),
+        (desk_step({"goto": "http://demo.test"}), "step 1: `do[1]`: `goto` is for a web page: an app has no addresses"),
+        (desk(crop={"css": "aside"}), "`crop`: `css` is for a web page"),
+        (desk_step({"click": {"at": "960"}}), "step 1: `do[1]`: `click`: `at`: write it as XxY, for example 960x540"),
+        (desk_step({"click": {"at": 960}}), "`at`: write it as XxY, for example 960x540"),
+        (desk_step({"click": {"at": "960x540", "size": "0x40"}}), "`size`: width and height must be more than 0"),
+        (desk_step({"click": {"at": "960x540", "size": "wide"}}), "`size`: write it as XxY, for example 120x40"),
+        (desk_step({"click": {"role": "button", "size": "120x40"}}), "`size` needs `at`"),
+        (desk_step({"click": {"at": "960x540", "nth": 0}}), "`nth` does not go with `at`"),
+        (desk_step({"click": {"at": "1920x540"}}), "step 1: `do[1]`: `click`: `at` is outside the picture of 1920x1080"),
+        (desk_step({"box": {"at": "1900x500", "size": "120x40"}}), "`at` and `size` reach outside the picture of 1920x1080"),
+        (desk_step({"circle": {"at": "960x540"}}), "step 1: `do[1]`: `circle` needs an area: add `size`"),
+        (desk(crop={"at": "100x100"}), "`crop` needs an area: add `size`"),
+        (desk_step({"click": {"role": "button", "within": {"at": "0x0", "size": "100x100"}}}),
+         "`within` takes a locator of the tree: role, label or text"),
+        (one_step({"do": [{"click": {"at": "960x540"}}]}),
+         "step 1: `do[1]`: `click`: `at` is for a desktop app. A web storyboard can use role, label, placeholder, text, testid, css"),
+        (board(setup=[{"run": "true"}]), "`setup[1]`: `run` is for a desktop app: it runs a command in the container of the app"),
+        (board(crop={"at": "0x0", "size": "10x10"}), "`crop`: `at` is for a desktop app"),
+    ],
+)
+def test_what_the_other_kind_of_storyboard_has_is_refused(data, fragment):
+    assert fragment in error(data)
