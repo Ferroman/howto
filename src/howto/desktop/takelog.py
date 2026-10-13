@@ -31,12 +31,30 @@ class Shown:
 
 
 @dataclass(frozen=True)
+class Move:
+    """One move of the picture: from `start`, for `seconds`, to the part whose corner is `left`, `top`, enlarged by `factor`.
+
+    The corner is in pixels of the picture. A factor of 1 with a corner of
+    0, 0 is the whole picture again. The times are seconds since the take began.
+    """
+
+    start: float
+    seconds: float
+    left: float
+    top: float
+    factor: float
+
+
+@dataclass(frozen=True)
 class TakeLog:
     # The size of the picture.
     viewport: tuple[int, int]
     # Seconds of the recording that lie before the take.
     head: float = 0.0
     shown: tuple[Shown, ...] = ()
+    # How many pixels of the recording one pixel of the picture is: 2 for a storyboard that zooms.
+    scale: int = 1
+    moves: tuple[Move, ...] = ()
 
 
 def beside(video: Path) -> Path:
@@ -56,6 +74,8 @@ def read(path: Path) -> TakeLog:
             viewport=(int(width), int(height)),
             head=float(data["head"]),
             shown=tuple(Shown(**item) for item in data["shown"]),
+            scale=int(data.get("scale", 1)),
+            moves=tuple(Move(**item) for item in data.get("moves", ())),
         )
     except (OSError, ValueError, KeyError, TypeError) as exc:
         raise RunError(f"{path}: not the log of a take: {exc}") from None

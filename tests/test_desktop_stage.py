@@ -5,8 +5,9 @@ import pytest
 
 from fakes import FakeClock, ScriptedLink
 from howto.desktop import takelog
+from howto.desktop.takelog import Move
 from howto.desktop.link import HelperError
-from howto.desktop.stage import DesktopStage, PRESS, wire
+from howto.desktop.stage import DesktopStage, PRESS, ZOOM, scale_of, wire
 from howto import marks, notes
 from howto.zoom import Box
 from howto.errors import RunError
@@ -716,3 +717,205 @@ def test_without_a_crop_nothing_is_left_out():
     desk, _ = stage(("find", found(x=900, y=600)), ("pointer", {}), ("click", {}), ("outline", outlined()))
     desk.perform(action({"click": ADD}), Pace())
     assert desk.report(None, 20_000).notices == ()
+
+
+def read(*lines):
+    return {"lines": [{"text": text, "box": list(box)} for text, box in lines]}
+
+
+def reporting(tmp_path, *script):
+    """A stage that saves the screenshot of its report."""
+    shots = tmp_path / "cache" / "probe" / "demo.png"
+    return *stage(*script, shots=shots), shots
+
+
+def test_the_report_has_the_words_that_the_outline_lacks_as_locators_to_copy(tmp_path):
+    lines = read(("Layer 1", (1620.4, 200.2, 61.5, 23.6)), ("Painted words", (40, 180, 250.0, 36.0)))
+    desk, link, shots = reporting(tmp_path, ("outline", outlined()), ("screenshot", {"path": "/tmp/howto/screen.png"}), ("words", lines))
+    page = desk.report(None, 20_000)
+    assert page.words == ('"Layer 1" {at: 1620x200, size: 62x24}', '"Painted words" {at: 40x180, size: 250x36}')
+    assert page.screenshot == str(shots) and shots.read_bytes() == b"fetched"
+    assert link.asked[1:] == [
+        ("screenshot", {}),
+        ("words", {"lacking": True, "within": None, "shot": "/tmp/howto/screen.png"}),
+    ]
+    assert link.fetched == [("/tmp/howto/screen.png", shots)]
+
+
+def test_the_words_of_a_report_are_limited_as_its_outline_is(tmp_path):
+    script = [("outline", outlined()), ("screenshot", {"path": "/s.png"}), ("words", read())]
+    desk, link, _ = reporting(tmp_path, *script)
+    desk.report(parse_locator({"role": "dialog"}, "x"), 20_000)
+    assert link.asked[2][1]["within"] == {"role": "dialog"}
+
+
+def test_the_words_get_what_the_outline_leaves_of_the_limit(tmp_path):
+    lines = read(("One", (0, 0, 10, 10)), ("Two", (0, 20, 10, 10)), ("Three", (0, 40, 10, 10)))
+    script = [("outline", outlined(outline="- frame")), ("screenshot", {"path": "/s.png"}), ("words", lines)]
+    desk, _, _ = reporting(tmp_path, *script)
+    # The outline has 7 characters, so 63 are left. A line of words costs about 30 with its line break: two fit.
+    page = desk.report(None, 70)
+    assert page.words == ('"One" {at: 0x0, size: 10x10}', '"Two" {at: 0x20, size: 10x10}')
+    assert page.omitted == len('"Three" {at: 0x40, size: 10x10}')
+
+
+def test_an_outline_that_was_cut_leaves_no_room_for_words(tmp_path):
+    lines = read(("One", (0, 0, 10, 10)))
+    desk, _, _ = reporting(tmp_path, ("outline", outlined()), ("screenshot", {"path": "/s.png"}), ("words", lines))
+    page = desk.report(None, 30)
+    assert page.words == () and page.omitted == 17 + len('"One" {at: 0x0, size: 10x10}')
+    assert page.screenshot
+
+
+def test_a_report_without_a_place_for_its_screenshot_asks_for_none(tmp_path):
+    desk, link = stage(("outline", outlined()))
+    page = desk.report(None, 20_000)
+    assert (page.words, page.screenshot) == ((), "")
+    assert [name for name, _ in link.asked] == ["outline"]
+
+
+def test_words_on_the_screen_are_pressed_without_asking_what_covers_them():
+    on_screen = {"count": 1, "box": [40, 180, 250, 36], "layer": "screen", "window": ""}
+    desk, link = stage(("find", on_screen), ("pointer", {}), ("click", {}))
+    desk.perform(action({"click": {"text": "Painted words"}}), Pace())
+    assert link.asked[1:] == [("pointer", {"x": 165.0, "y": 198.0, "seconds": 0.0}), ("click", {"hold": 0, "window": ""})]
+
+
+def test_words_that_are_nowhere_say_that_both_were_looked_at():
+    desk, _ = stage(("find", {"count": 0, "tried": ["tree", "screen"], "nearest": ["Export"]}))
+    assert failure(desk, {"click": {"text": "Exprot"}}) == (
+        'click text="Exprot": not in the tree, and no such words on the screen. The nearest words: "Export"'
+    )
+
+
+TARGET = found(x=900, y=500, width=120, height=40)
+# What `zoom.frame` gives for that target in a picture of 1920 by 1080, enlarged twice.
+AROUND_TARGET = (480.0, 250.0, 2.0)
+
+
+def zooming(tmp_path, *script, **options):
+    """A stage of a storyboard that zooms, which has started recording."""
+    clock = FakeClock()
+    link = ScriptedLink(("record_start", {"first_frame": 99.5}), *script)
+    desk = DesktopStage(link, board(zoom=2), timeout=10, first="Fixture", now=clock.now, sleep=clock.sleep, **options)
+    desk.start_recording(tmp_path / "capture.mkv")
+    return desk, link, clock
+
+
+def test_a_storyboard_that_zooms_gets_a_monitor_of_twice_the_size():
+    assert scale_of(board()) == 1
+    assert scale_of(board(zoom=2)) == 2
+    assert scale_of(board([{"do": [{"click": ADD}], "zoom": 1.5}])) == 2
+
+
+def test_a_zoom_writes_a_move_and_the_take_waits_for_it(tmp_path):
+    desk, _, clock = zooming(tmp_path, ("find", TARGET), STOP)
+    clock.t += 1.0
+    desk.zoom_to(action({"click": ADD}), 2.0, True)
+    assert ZOOM == 0.8 and clock.t == pytest.approx(101.8)
+    log = stopped(desk, tmp_path)
+    assert log.scale == 2 and log.moves == (Move(1.0, 0.8, *AROUND_TARGET),)
+
+
+def test_the_corner_of_the_enlarged_part_is_at_whole_pixels(tmp_path):
+    # The middle of this target is at 961.5, 521.5, so `zoom.frame` gives a corner of 481.5, 251.5.
+    desk, _, _ = zooming(tmp_path, ("find", found(x=901, y=501, width=121, height=41)), STOP)
+    desk.zoom_to(action({"click": ADD}), 2.0, True)
+    assert stopped(desk, tmp_path).moves == (Move(0.0, 0.8, 481.0, 251.0, 2.0),)
+
+
+def test_the_way_back_is_a_move_to_the_whole_picture(tmp_path):
+    desk, _, clock = zooming(tmp_path, ("find", TARGET), STOP)
+    desk.zoom_to(action({"click": ADD}), 2.0, True)
+    clock.t += 1.0
+    desk.zoom_out(True)
+    assert clock.t == pytest.approx(102.6)
+    into, out = stopped(desk, tmp_path).moves
+    assert out == Move(pytest.approx(1.8), 0.8, 0.0, 0.0, 1.0)
+
+
+def test_the_same_target_twice_and_a_wide_picture_that_goes_wide_move_nothing(tmp_path):
+    desk, _, clock = zooming(tmp_path, ("find", TARGET), ("find", TARGET), STOP)
+    desk.zoom_out(True)
+    desk.zoom_to(action({"click": ADD}), 2.0, True)
+    desk.zoom_to(action({"click": ADD}), 2.0, True)
+    assert clock.t == pytest.approx(100.8)
+    assert len(stopped(desk, tmp_path).moves) == 1
+
+
+def test_a_target_too_large_to_enlarge_leaves_the_picture_wide(tmp_path):
+    desk, _, clock = zooming(tmp_path, ("find", found(x=10, y=10, width=1880, height=1000)), STOP)
+    desk.zoom_to(action({"click": ADD}), 2.0, True)
+    assert clock.t == 100.0 and stopped(desk, tmp_path).moves == ()
+
+
+def test_a_wide_picture_at_once_is_a_move_without_seconds(tmp_path):
+    # What `runner` asks for after a step that failed or was stopped.
+    desk, _, clock = zooming(tmp_path, ("find", TARGET), STOP)
+    desk.zoom_to(action({"click": ADD}), 2.0, True)
+    desk.zoom_out(False)
+    assert clock.t == pytest.approx(100.8)
+    assert stopped(desk, tmp_path).moves[1] == Move(pytest.approx(0.8), 0.0, 0.0, 0.0, 1.0)
+
+
+def test_a_click_in_an_enlarged_picture_shows_its_ring_where_the_viewer_sees_the_control(tmp_path):
+    desk, link, _ = zooming(tmp_path, ("find", TARGET), ("find", TARGET), ("pointer", {}), ("click", {}), STOP)
+    desk.zoom_to(action({"click": ADD}), 2.0, True)
+    desk.perform(action({"click": ADD}), Pace())
+    # The pointer goes to the control where the app has it.
+    assert link.asked[3][1]["x"] == 960.0 and link.asked[3][1]["y"] == 520.0
+    (ring,) = stopped(desk, tmp_path).shown
+    # (960 - 480) * 2 and (520 - 250) * 2: the middle of the enlarged picture.
+    assert "left:960.0px;top:540.0px" in ring.html
+
+
+def test_a_mark_in_an_enlarged_picture_goes_around_the_enlarged_control(tmp_path):
+    desk, _, _ = zooming(tmp_path, ("find", TARGET), ("find", TARGET), STOP)
+    mark = action({"box": ADD})
+    desk.zoom_to(mark, 2.0, True)
+    desk.mark(mark, True)
+    (shown,) = stopped(desk, tmp_path).shown
+    assert shown.html == marks.layer(marks.box(Box(840, 500, 240, 80), (1920, 1080)), (1920, 1080))
+
+
+def test_the_picture_holds_still_under_a_mark_while_the_next_target_is_in_it(tmp_path):
+    inside, outside = found(x=1000, y=560, width=80, height=30), found(x=100, y=900, width=80, height=30)
+    script = [("find", TARGET), ("find", TARGET), ("find", inside), ("find", inside), ("find", outside), STOP]
+    desk, _, clock = zooming(tmp_path, *script)
+    mark = action({"underline": ADD})
+    desk.zoom_to(mark, 2.0, True)
+    desk.mark(mark, True)
+    desk.zoom_to(mark, 2.0, True)
+    desk.mark(mark, True)
+    assert clock.t == pytest.approx(102.0)
+    # The third target is not in the picture. The marks fade first, and then the picture moves.
+    desk.zoom_to(mark, 2.0, True)
+    assert clock.t == pytest.approx(103.05)
+    log = stopped(desk, tmp_path)
+    assert log.moves == (Move(0.0, 0.8, *AROUND_TARGET), Move(pytest.approx(2.25), 0.8, 0.0, 540.0, 2.0))
+    assert [shown.end for shown in log.shown] == [pytest.approx(2.25), pytest.approx(2.25)]
+
+
+def test_an_arrow_in_an_enlarged_picture_asks_about_places_of_the_picture_s_own_size(tmp_path):
+    nothing = ("busy", lambda fields: {"shares": [0.0] * len(fields["areas"])})
+    desk, link, _ = zooming(tmp_path, ("find", TARGET), ("find", TARGET), nothing, STOP)
+    arrow = action({"arrow": ADD})
+    desk.zoom_to(arrow, 2.0, True)
+    desk.mark(arrow, True)
+    candidates = marks.arrows(Box(840, 500, 240, 80), (1920, 1080))
+    areas = link.asked[3][1]["areas"]
+    x, y = candidates[0].points[0]
+    # A point of the enlarged picture, back in the picture at its own size: half as far from the corner of the part that is shown.
+    assert areas[0] == pytest.approx([480 + (x - 6) / 2, 250 + (y - 6) / 2, 6.0, 6.0])
+    assert all(area[2:] == [6.0, 6.0] for area in areas)
+    (shown,) = stopped(desk, tmp_path).shown
+    assert shown.html == marks.layer(marks.arrow(candidates[0]), (1920, 1080))
+
+
+def test_a_probe_finds_the_target_of_a_zoom_and_writes_nothing():
+    link = ScriptedLink(("find", TARGET), ("find", {"count": 0, "tried": ["tree"], "nearest": []}))
+    desk = DesktopStage(link, board(zoom=2), timeout=10, first="Fixture")
+    desk.zoom_to(action({"click": ADD}), 2.0, False)
+    desk.zoom_out(False)
+    with pytest.raises(StepFailed, match='click role=button name="Add": not in the tree'):
+        desk.zoom_to(action({"click": ADD}), 2.0, False)

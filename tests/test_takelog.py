@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from howto.desktop import takelog
-from howto.desktop.takelog import Shown, TakeLog
+from howto.desktop.takelog import Move, Shown, TakeLog
 from howto.errors import RunError
 
 LOG = TakeLog(
@@ -43,3 +43,15 @@ def test_a_file_that_is_no_log_is_named(tmp_path, content):
 def test_a_missing_log_is_named(tmp_path):
     with pytest.raises(RunError, match="take.json: not the log of a take"):
         takelog.read(tmp_path / "take.json")
+
+
+def test_the_moves_of_a_zoom_come_back_as_they_were_written(tmp_path):
+    log = TakeLog(viewport=(1280, 720), head=0.5, scale=2, moves=(Move(1.0, 0.8, 320.0, 90.0, 2.0), Move(4.0, 0.8, 0.0, 0.0, 1.0)))
+    takelog.write(log, tmp_path / "take.json")
+    assert takelog.read(tmp_path / "take.json") == log
+
+
+def test_a_log_without_moves_is_a_take_that_did_not_zoom(tmp_path):
+    (tmp_path / "take.json").write_text('{"viewport": [1280, 720], "head": 0.5, "shown": []}')
+    log = takelog.read(tmp_path / "take.json")
+    assert (log.scale, log.moves) == (1, ())

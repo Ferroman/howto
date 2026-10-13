@@ -20,7 +20,7 @@ from ..storyboard import MARK_ACTIONS, Action, Locator, Pace, Storyboard
 from ..tools import action_timeout, docker_command
 from . import images, takelog
 from .link import HelperError, open_link
-from .takelog import Shown, TakeLog
+from .takelog import Move, Shown, TakeLog
 
 # Seconds that a request which does one quick thing may take.
 QUICK = 15.0
@@ -34,6 +34,8 @@ POINTER_QUICKEST, POINTER_SLOWEST = 0.25, 0.9
 # For an arrow: how wide the area around each of its points is that the helper looks at, in pixels of the
 # picture, and from which part on that area counts as something.
 PATCH = 12.0
+# Seconds that the picture takes to move to another part of itself, as on a web page (`capture.ZOOM_MS`).
+ZOOM = 0.8
 BUSY_FROM = 0.1
 # Pixels at the edge of the picture where an arrow does not go, as on a web page.
 EDGE = 4.0
@@ -49,6 +51,17 @@ class Found:
     @property
     def middle(self) -> tuple[float, float]:
         return self.box.x + self.box.width / 2, self.box.y + self.box.height / 2
+
+
+def scale_of(storyboard: Storyboard) -> int:
+    """How many pixels of the monitor one pixel of the picture is: 2 for a storyboard that zooms.
+
+    An app cannot enlarge itself as a page can. So the monitor of a
+    storyboard that zooms has twice the size, and a zoom is a cut of the
+    recording. A storyboard without a zoom keeps a monitor of the picture's
+    size: four times the pixels are four times the work.
+    """
+    return 2 if storyboard.zooms else 1
 
 
 def wire(locator: Locator) -> dict:
@@ -114,6 +127,10 @@ class DesktopStage:
         self._sleep = sleep
         # The marks that are on the picture now: when each was drawn, and its HTML.
         self._marks: list[tuple[float, str]] = []
+        self._scale = scale_of(storyboard)
+        # The part of the picture that the viewer sees enlarged. None is the whole picture.
+        self._window: zoom.Window | None = None
+        self._moves: list[Move] = []
         # The part of the picture that an animated picture is cut to. None is the whole picture. See `crop_to`.
         self._crop: zoom.Box | None = None
         # The strip for the notes of a cropped picture, and whether it lies outside the crop. See `crop_to`.
@@ -172,6 +189,22 @@ class DesktopStage:
                 return
             self._sleep(min(left, 0.1))
 
+    def _seen(self, box: zoom.Box) -> zoom.Box:
+        """Where a part of the picture is in what the viewer sees: its own place, or its place in the enlarged picture."""
+        return box if self._window is None else self._window.to_screen(box)
+
+    def _move(self, window: zoom.Window | None, animate: bool) -> None:
+        """Shows another part of the picture, or the whole of it for None. In a take the move goes into the log."""
+        if window == self._window:
+            return
+        self._window = window
+        if self._video is None:
+            return
+        seconds = ZOOM if animate else 0.0
+        to = window or zoom.Window(0.0, 0.0, 1.0)
+        self._moves.append(Move(self._time(), seconds, to.left, to.top, to.factor))
+        self._wait(seconds)
+
     def _check_crop(self, action: Action, box: zoom.Box) -> None:
         """Keeps a note of an action whose element the crop leaves out of the picture.
 
@@ -201,7 +234,8 @@ class DesktopStage:
             return
         # The pointer of a desktop shows no click, so a ring spreads from it as the button goes down.
         at, ring = self._time(), notes.RING_MS / 1000
-        self._shown.append(Shown("click", at, at + ring, notes.ring_html(*found.middle), grow=ring))
+        seen = self._seen(zoom.Box(*found.middle, 0, 0))
+        self._shown.append(Shown("click", at, at + ring, notes.ring_html(seen.x, seen.y), grow=ring))
         self._ask("click", hold=PRESS, window=found.window)
 
     def _type(self, text: str, pace: Pace) -> None:
@@ -263,14 +297,31 @@ class DesktopStage:
             raise self._refused(action, exc) from None
 
     def zoom_to(self, action: Action, factor: float, animate: bool) -> None:
-        """A zoom is made after the take, from the recording. Here it finds its target, so that a probe fails as a take would."""
+        """Enlarges the picture around the element that an action names. Without `animate` it is there at once.
+
+        Nothing happens on the monitor. The move goes into the log, and the
+        assembly cuts the enlarged part out of the recording.
+        """
         try:
-            self._find(action)
+            found = self._find(action)
         except HelperError as exc:
             raise self._refused(action, exc) from None
+        if self._marks and zoom.on_screen(self._seen(found.box), self.viewport):
+            # The picture holds still while something is drawn on it, as long as the next target is in it.
+            return
+        # From here on the picture may move, and a mark would stay behind.
+        self.clear_marks(animate)
+        window = zoom.frame(found.box, self.viewport, factor)
+        if window is not None:
+            # Its corner at whole pixels of the picture, which are even pixels of the recording. ffmpeg cuts
+            # there without a remainder, so a mark lies exactly where its control is.
+            window = zoom.Window(float(math.floor(window.left)), float(math.floor(window.top)), window.factor)
+        self._move(window, animate)
 
     def zoom_out(self, animate: bool) -> None:
-        pass
+        """Back to the whole picture. Does nothing when the picture is wide."""
+        self.clear_marks(animate)
+        self._move(None, animate)
 
     def _busy(self, candidates: Sequence[marks.Arrow], picture: zoom.Box) -> list[int]:
         """For each way to draw an arrow, how many of its points lie on something, or outside the picture.
@@ -288,7 +339,11 @@ class DesktopStage:
                     # An arrow must not leave the picture.
                     counts[index] += 1
                 else:
-                    asked.append((index, [x - PATCH / 2, y - PATCH / 2, PATCH, PATCH]))
+                    patch = zoom.Box(x - PATCH / 2, y - PATCH / 2, PATCH, PATCH)
+                    if self._window is not None:
+                        # The arrow lies on the enlarged picture, and the helper looks at the picture at its own size.
+                        patch = self._window.to_page(patch)
+                    asked.append((index, [patch.x, patch.y, patch.width, patch.height]))
         if asked:
             shares = self._ask("busy", limit=2 * QUICK, areas=[area for _, area in asked])["shares"]
             for (index, _), share in zip(asked, shares):
@@ -302,12 +357,13 @@ class DesktopStage:
             self._check_crop(action, found.box)
             if not draw:
                 return
+            target = self._seen(found.box)
             if action.kind == "arrow":
                 picture = self._crop or zoom.Box(0, 0, *self.viewport)
-                candidates = marks.arrows(found.box, self.viewport, action.value, self._crop)
+                candidates = marks.arrows(target, self.viewport, action.value, self._crop)
                 drawing = marks.arrow(marks.emptiest(candidates, self._busy(candidates, picture)))
             else:
-                drawing = marks.SHAPES[action.kind](found.box, self.viewport)
+                drawing = marks.SHAPES[action.kind](target, self.viewport)
         except HelperError as exc:
             raise self._refused(action, exc) from None
         self._marks.append((self._time(), marks.layer(drawing, self.viewport)))
@@ -360,6 +416,8 @@ class DesktopStage:
         self._shown = []
         self._note = None
         self._marks = []
+        self._window = None
+        self._moves = []
 
     def stop_recording(self) -> None:
         """Ends the recording, fetches it, and writes the log of the take beside it."""
@@ -386,7 +444,10 @@ class DesktopStage:
         if self._note is not None:
             self._shown.append(Shown("note", self._note[0], end, self._note[1]))
             self._note = None
-        takelog.write(TakeLog(viewport=self.viewport, head=self._head, shown=tuple(self._shown)), takelog.beside(video))
+        log = TakeLog(
+            viewport=self.viewport, head=self._head, shown=tuple(self._shown), scale=self._scale, moves=tuple(self._moves)
+        )
+        takelog.write(log, takelog.beside(video))
 
     def show_chapter(self, title: str, seconds: float) -> None:
         fade = notes.CARD_FADE_MS / 1000
@@ -464,7 +525,7 @@ def open_stage(
         try:
             started = link.request(
                 "start", limit=3 * timeout + 2 * QUICK, run=storyboard.app.run, width=width, height=height,
-                timeout=3 * timeout,
+                scale=scale_of(storyboard), timeout=3 * timeout,
             )
         except HelperError as exc:
             raise RunError(str(exc)) from None
