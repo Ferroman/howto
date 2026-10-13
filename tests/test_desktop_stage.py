@@ -337,7 +337,7 @@ def test_a_click_leaves_a_ring_in_the_log_at_the_time_of_the_press(tmp_path):
     clock.t += 2.0
     desk.perform(action({"click": ADD}), Pace())
     (ring,) = stopped(desk, tmp_path).shown
-    assert (ring.kind, ring.start, ring.end, ring.grow) == ("click", 2.0, 2.45, 0.45)
+    assert (ring.kind, ring.start, ring.end, ring.grow) == ("click", 2.0, 2.45, 0.0)
     assert "left:140.0px;top:55.0px" in ring.html
 
 
@@ -373,12 +373,12 @@ def test_a_note_that_is_still_shown_ends_with_the_take(tmp_path):
     assert (note.start, note.end) == (0.0, 2.0)
 
 
-def test_a_title_card_fades_in_stays_and_fades_out(tmp_path):
+def test_a_title_card_appears_at_once_and_fades_out(tmp_path):
     desk, _, clock = recording(tmp_path, ("record_stop", {"path": "/x.mkv"}))
     desk.show_chapter("Add a name", 2.0)
     clock.t += 3.0
     (card,) = stopped(desk, tmp_path).shown
-    assert (card.kind, card.start, card.end, card.grow, card.fade) == ("card", 0.0, 2.3, 0.3, 0.3)
+    assert (card.kind, card.start, card.end, card.grow, card.fade) == ("card", 0.0, 2.3, 0.0, 0.3)
     assert "Add a name" in card.html
 
 
@@ -481,13 +481,13 @@ def test_a_mark_is_in_the_log_from_when_it_is_drawn_until_it_has_faded(tmp_path)
     desk, link, clock = recording(tmp_path, ("find", found(x=100, y=40)), STOP)
     clock.t += 1.0
     desk.mark(action({"box": ADD}), True)
-    # The take waits while the mark draws itself.
+    # The take still gives the mark its time on screen, even though it appears at once.
     assert clock.t == pytest.approx(101.6)
     clock.t += 2.0
     desk.clear_marks(True)
     assert clock.t == pytest.approx(103.85)
     (mark,) = stopped(desk, tmp_path).shown
-    assert (mark.kind, mark.start, mark.grow, mark.fade) == ("mark", 1.0, 0.6, 0.25)
+    assert (mark.kind, mark.start, mark.grow, mark.fade) == ("mark", 1.0, 0.0, 0.25)
     assert mark.end == pytest.approx(3.85)
     assert mark.html == marks.layer(marks.box(Box(100, 40, 80, 30), (1920, 1080)), (1920, 1080))
     assert link.asked[1] == FIND_ADD_FOR_A_MARK

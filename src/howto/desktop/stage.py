@@ -39,6 +39,9 @@ ZOOM = 0.8
 BUSY_FROM = 0.1
 # Pixels at the edge of the picture where an arrow does not go, as on a web page.
 EDGE = 4.0
+# Seconds that a mark, a ring or a card takes to appear. Measured: Chromium drew the 321 pictures of a
+# 60 s take in 13.1 s, over the 10 s mark, so nothing is stepped frame by frame here. Each appears at once.
+GROW = 0.0
 
 
 @dataclass(frozen=True)
@@ -231,7 +234,7 @@ class DesktopStage:
         # The pointer of a desktop shows no click, so a ring spreads from it as the button goes down.
         at, ring = self._time(), notes.RING_MS / 1000
         seen = self._seen(zoom.Box(*found.middle, 0, 0))
-        self._shown.append(Shown("click", at, at + ring, notes.ring_html(seen.x, seen.y), grow=ring))
+        self._shown.append(Shown("click", at, at + ring, notes.ring_html(seen.x, seen.y), grow=GROW))
         self._ask("click", hold=PRESS, window=found.window)
 
     def _type(self, text: str, pace: Pace) -> None:
@@ -347,7 +350,7 @@ class DesktopStage:
         return counts
 
     def mark(self, action: Action, draw: bool) -> None:
-        """Finds the element of a mark. With `draw` the mark goes into the log, and the take waits while it draws itself."""
+        """Finds the element of a mark. With `draw` the mark goes into the log, and the take waits for the time a mark is on screen."""
         try:
             found = self._find(action)
             self._check_crop(action, found.box)
@@ -372,7 +375,7 @@ class DesktopStage:
         fade = marks.FADE_MS / 1000 if animate else 0.0
         end = self._time() + fade
         for start, html in self._marks:
-            self._shown.append(Shown("mark", start, end, html, grow=marks.DRAW_MS / 1000, fade=fade))
+            self._shown.append(Shown("mark", start, end, html, grow=GROW, fade=fade))
         self._marks = []
         self._wait(fade)
 
@@ -431,7 +434,7 @@ class DesktopStage:
             return
         self._link.fetch(reply["path"], video)
         for start, html in self._marks:
-            self._shown.append(Shown("mark", start, end, html, grow=marks.DRAW_MS / 1000))
+            self._shown.append(Shown("mark", start, end, html, grow=GROW))
         self._marks = []
         if self._strip is not None and self._strip_outside:
             # A strip outside the crop lies on a part of the monitor that is not the picture's subject,
@@ -448,7 +451,7 @@ class DesktopStage:
     def show_chapter(self, title: str, seconds: float) -> None:
         fade = notes.CARD_FADE_MS / 1000
         at = self._time()
-        self._shown.append(Shown("card", at, at + seconds + fade, notes.card_html(title), grow=fade, fade=fade))
+        self._shown.append(Shown("card", at, at + seconds + fade, notes.card_html(title), grow=GROW, fade=fade))
 
     def show_note(self, text: str) -> None:
         self._note = (self._time(), notes.note_html(text, self._strip))
