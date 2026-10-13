@@ -129,3 +129,34 @@ class FakeStage:
         self.calls.append("report")
         self.report_args = (within, max_chars)
         return PageReport(url="http://demo.test/end", title="End", outline='- heading "End" [level=1]')
+
+class ScriptedLink:
+    """Stands in for the link to the helper: a list of the requests it expects, and the reply to each.
+
+    A reply is the fields of an answer, an exception to raise, or a function
+    of the request's fields that returns the fields of an answer.
+    """
+
+    def __init__(self, *script):
+        self.script = list(script)
+        self.asked: list[tuple[str, dict]] = []
+        self.limits: list[float] = []
+        self.fetched: list[tuple[str, Path]] = []
+
+    def request(self, request, *, limit, **fields):
+        self.asked.append((request, fields))
+        self.limits.append(limit)
+        assert self.script, f"a request that the script does not have: {request} {fields}"
+        expected, reply = self.script.pop(0)
+        assert request == expected, f"expected `{expected}`, and `{request}` was asked: {fields}"
+        if callable(reply):
+            reply = reply(fields)
+        if isinstance(reply, Exception):
+            raise reply
+        return {"ok": True, **reply}
+
+    def fetch(self, inside, out):
+        self.fetched.append((inside, Path(out)))
+        # The link makes the folder of what it fetches, and so does this.
+        Path(out).parent.mkdir(parents=True, exist_ok=True)
+        Path(out).write_bytes(b"fetched")
