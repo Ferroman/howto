@@ -1,0 +1,20 @@
+WEBVTT
+
+00:00:00.000 --> 00:00:02.766
+Open the Replace dialog with Control+H.
+
+00:00:03.166 --> 00:00:06.304
+Type the word "colour" into the Find field.
+
+00:00:06.704 --> 00:00:10.177
+Type the word "color" into the Replace with field.
+
+00:00:10.577 --> 00:00:13.904
+Click Replace All to replace every occurrence.
+
+00:00:14.304 --> 00:00:16.228
+Close the Replace dialog.
+
+00:00:16.628 --> 00:00:18.861
+Save the file with Control+S.
+

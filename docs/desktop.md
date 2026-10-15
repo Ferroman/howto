@@ -2,6 +2,8 @@
 
 `howto` films a Linux desktop app as it films a web app: from a storyboard, with `howto probe`, `howto render` and `howto animate`. This page is for the person who wants the video. [The skill](../skill/SKILL.md#desktop-apps) is the reference of the format, written for the agent that writes the storyboard. [The internals page](internals.md#desktop-apps) says how it works, and why.
 
+`howto render` made [this narrated video of gedit](media/replace.mp4) from [examples/desktop/replace.yaml](../examples/desktop/replace.yaml). It replaces a word in a document and saves the document. On [the site](https://ferroman.github.io/howto/desktop/) the video plays in the page.
+
 ## What can be filmed
 
 - **A Linux app that draws on X11**: GTK, Qt, Electron, and most of the rest. One mechanism serves them all, and `howto` has no code for one toolkit or one app.
